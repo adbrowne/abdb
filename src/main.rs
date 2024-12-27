@@ -54,18 +54,12 @@ fn query_1() {
         }
     }
 
-    // let lineitems : Vec<LineItem> = bincode::deserialize_from(file).expect("Failed to deserialize");
-    // for item in lineitems {
-    //     let key = (item.l_returnflag, item.l_linestatus);
-    //     let entry = state.entry(key).or_insert(0.0);
-    //     *entry += item.l_quantity;
-    //     count += 1;
-    //     if(count % 10000 == 0) {
-    //         println!("Count: {}", count);
-    //     }
-    // }
     println!("Count: {}", count);
-    println!("{:?}", state);
+    for x in state.iter() {
+        let l_returnflag = String::from_utf8(vec![x.0 .0]).unwrap();
+        let l_linestatus = String::from_utf8(vec![x.0 .1]).unwrap();
+        println!("{}, {}, {} ", l_returnflag, l_linestatus, x.1);
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -78,24 +72,21 @@ struct LineItem {
 fn save_data() {
     let conn = duckdb::Connection::open("db").unwrap();
     let mut stmt = conn.prepare("SELECT l_returnflag, l_linestatus, l_quantity FROM lineitem").unwrap();
-    let rows = stmt.query_map([], |row| {
-        Ok(LineItem {
-            l_returnflag: row.get(0)?,
-            l_linestatus: row.get(1)?,
-            l_quantity: row.get(2)?
-        })
-    }).unwrap();
+    
+    let mut rows = stmt.query([]).unwrap();
 
     let file = std::fs::File::create("lineitems.bin").expect("Failed to create file");
-
     let mut writer = std::io::BufWriter::new(file);
-    for chunk in rows.collect::<Result<Vec<_>, _>>().unwrap().chunks(10000) {
-        for item in chunk {
-            let ls_byte: u8 = item.l_linestatus.as_bytes()[0];
-            let returnflag_byte: u8 = item.l_returnflag.as_bytes()[0];
-            writer.write(&[ls_byte, returnflag_byte]).expect("Failed to write");
-            writer.write_all(&item.l_quantity.to_le_bytes()).expect("Failed to write");
-        }
+
+    while let Some(row) = rows.next().unwrap() {
+        let l_returnflag: String = row.get(0).unwrap();
+        let l_linestatus: String = row.get(1).unwrap();
+        let l_quantity: f64 = row.get(2).unwrap();
+
+        let ls_byte: u8 = l_linestatus.as_bytes()[0];
+        let returnflag_byte: u8 = l_returnflag.as_bytes()[0];
+        writer.write(&[returnflag_byte, ls_byte]).expect("Failed to write");
+        writer.write_all(&l_quantity.to_le_bytes()).expect("Failed to write");
     }
 }
 
