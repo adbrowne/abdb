@@ -1,9 +1,7 @@
 use std::{array::{self}, io::{Read, Write}};
 
-use serde::{Deserialize, Serialize};
-
 use clap::{Parser, Subcommand};
-
+mod tests;
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 struct Cli {
@@ -49,15 +47,21 @@ fn query_1() {
     let mut state : [Option<QueryOneState>; 256*256] = array::from_fn(|_x| None);
     
     loop {
-        let mut buffer = [0u8; 34]; // 1 byte for l_returnflag, 1 byte for l_linestatus, 8 bytes for l_quantity
+        // 1 byte for l_returnflag
+        // 1 byte for l_linestatus
+        // 1 byte for l_quantity, 
+        // 1 byte for l_extended_price
+        // 1 byte for l_discount
+        // 1 byte for l_tax
+        let mut buffer = [0u8; 10]; 
         match reader.read_exact(&mut buffer) {
             Ok(_) => {
                 let l_returnflag_u8 = buffer[0];
                 let l_linestatus_u8 = buffer[1];
-                let l_quantity = f64::from_le_bytes(buffer[2..10].try_into().unwrap());
-                let l_extended_price = f64::from_le_bytes(buffer[10..18].try_into().unwrap());
-                let l_discount = f64::from_le_bytes(buffer[18..26].try_into().unwrap());
-                let l_tax = f64::from_le_bytes(buffer[26..34].try_into().unwrap());
+                let l_quantity = decompress_f64(u16::from_le_bytes(buffer[2..4].try_into().unwrap()));
+                let l_extended_price = decompress_f64(u16::from_le_bytes(buffer[4..6].try_into().unwrap()));
+                let l_discount = decompress_f64(u16::from_le_bytes(buffer[6..8].try_into().unwrap()));
+                let l_tax = decompress_f64(u16::from_le_bytes(buffer[8..10].try_into().unwrap()));
 
                 let array_location = (l_returnflag_u8 as usize) * 256 + (l_linestatus_u8 as usize);
                 let current_state =state[array_location].get_or_insert_default();
@@ -83,11 +87,14 @@ fn query_1() {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct LineItem {
-    l_returnflag : String,
-    l_linestatus : String,
-    l_quantity : f64 // TODO: Should be Decimal
+fn compress_f64(f: f64) -> u16 {
+    let f = f * 100.0;
+    let f = f.round();
+    f as u16
+}
+
+fn decompress_f64(f: u16) -> f64 {
+    f as f64 / 100.0
 }
 
 fn save_data() {
@@ -110,10 +117,10 @@ fn save_data() {
     while let Some(row) = rows.next().unwrap() {
         let l_returnflag: String = row.get(0).unwrap();
         let l_linestatus: String = row.get(1).unwrap();
-        let l_quantity: f64 = row.get(2).unwrap();
-        let l_extended_price: f64 = row.get(3).unwrap();
-        let l_discount: f64 = row.get(4).unwrap();
-        let l_tax: f64 = row.get(5).unwrap();
+        let l_quantity  = compress_f64(row.get(2).unwrap());
+        let l_extended_price = compress_f64(row.get(3).unwrap());
+        let l_discount = compress_f64(row.get(4).unwrap());
+        let l_tax  = compress_f64(row.get(5).unwrap());
 
         let ls_byte: u8 = l_linestatus.as_bytes()[0];
         let returnflag_byte: u8 = l_returnflag.as_bytes()[0];
