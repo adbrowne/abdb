@@ -1,5 +1,6 @@
-use std::{collections::HashMap, io::{Read, Write}};
+use std::{collections::HashMap, hash::Hash, io::{Read, Write}};
 
+use ahash::AHashMap;
 use bincode::de::read;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -31,7 +32,8 @@ fn query_1() {
     let file = std::fs::File::open("lineitems.bin").expect("Failed to open file");
     
     let mut reader = std::io::BufReader::new(file);
-    let mut state: HashMap<(u8, u8), f64> = HashMap::new();
+    // let mut state: AHashMap<(u8, u8), f64> = AHashMap::new();
+    let mut state2 = [0.0; 256 * 256];
     let mut count = 0;
     
     loop {
@@ -45,8 +47,9 @@ fn query_1() {
                 let l_quantity = f64::from_le_bytes(buffer[2..10].try_into().unwrap());
 
                 let key = (l_returnflag_u8, l_linestatus_u8);
-                let entry = state.entry(key).or_insert(0.0);
-                *entry += l_quantity;
+                // let entry = state.entry(key).or_insert(0.0);
+                // *entry += l_quantity;
+                state2[(l_returnflag_u8 as usize) * 256 + l_linestatus_u8 as usize] += l_quantity;
                 count += 1;
             }
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
@@ -55,10 +58,20 @@ fn query_1() {
     }
 
     println!("Count: {}", count);
-    for x in state.iter() {
-        let l_returnflag = String::from_utf8(vec![x.0 .0]).unwrap();
-        let l_linestatus = String::from_utf8(vec![x.0 .1]).unwrap();
-        println!("{}, {}, {} ", l_returnflag, l_linestatus, x.1);
+    // for x in state.iter() {
+    //     let l_returnflag = String::from_utf8(vec![x.0 .0]).unwrap();
+    //     let l_linestatus = String::from_utf8(vec![x.0 .1]).unwrap();
+    //     println!("{}, {}, {} ", l_returnflag, l_linestatus, x.1);
+    // }
+
+    for i in 0..256 {
+        for j in 0..256 {
+            if state2[i * 256 + j] != 0.0 {
+                let l_returnflag = String::from_utf8(vec![i as u8]).unwrap();
+                let l_linestatus = String::from_utf8(vec![j as u8]).unwrap();
+                println!("{}, {}, {} ", l_returnflag, l_linestatus, state2[i * 256 + j]);
+            }
+        }
     }
 }
 
