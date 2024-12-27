@@ -15,6 +15,7 @@ struct Cli {
 enum Commands {
     WriteLineItems,
     RunQuery1,
+    ReadFile,
 }
 
 #[derive(Debug, Default, PartialEq, Clone)]
@@ -26,30 +27,22 @@ struct QueryOneState {
     sum_charge: f64,
 }
 
-fn query_1() {
-    /* 
-            SELECT
-                l_returnflag,
-                l_linestatus,
-                sum(l_quantity) AS sum_qty,
-                sum(l_extendedprice) AS sum_base_price,
-                sum(l_extendedprice * (1 - l_discount)) AS sum_disc_price,
-                sum(l_extendedprice * (1 - l_discount) * (1 + l_tax)) AS sum_charge,
-                avg(l_quantity) AS avg_qty,
-                avg(l_extendedprice) AS avg_price,
-                avg(l_discount) AS avg_disc,
-                count(*) AS count_order
-            FROM
-                lineitem
-            WHERE
-                l_shipdate <= CAST('1998-09-02' AS date)
-            GROUP BY
-                l_returnflag,
-                l_linestatus
-            ORDER BY
-                l_returnflag,
-                l_linestatus; */
+fn read_file(){
+    let file = std::fs::File::open("lineitems.bin").expect("Failed to open file");
     
+    let mut reader = std::io::BufReader::new(file);
+    
+    loop {
+        let mut buffer = [0u8; 34]; // 1 byte for l_returnflag, 1 byte for l_linestatus, 8 bytes for l_quantity
+        match reader.read_exact(&mut buffer) {
+            Ok(_) => { }
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(e) => panic!("Failed to read from file: {}", e),
+        }
+    }
+}
+
+fn query_1() {
     let file = std::fs::File::open("lineitems.bin").expect("Failed to open file");
     
     let mut reader = std::io::BufReader::new(file);
@@ -144,6 +137,9 @@ fn main() {
         }
         Some(Commands::RunQuery1) => {
             query_1();
+        }
+        Some(Commands::ReadFile) => {
+            read_file();
         }
         None => {}
     }
