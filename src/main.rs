@@ -1,8 +1,10 @@
 use std::{
-    array::{self}, io::{Read, Write}
+    array::{self},
+    io::{BufRead, Read, Write},
 };
 
 use clap::{Parser, Subcommand};
+use duckdb::{Connection, Row};
 mod tests;
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -71,7 +73,7 @@ fn read_row_group<R: Read>(reader: &mut std::io::BufReader<R>) -> Vec<LineItem> 
 fn read_u16<R: Read>(reader: &mut std::io::BufReader<R>) -> u16 {
     let mut buffer = [0u8; 2];
     reader.read_exact(&mut buffer).expect("Failed to read");
-    let item_count =u16::from_le_bytes(buffer);
+    let item_count = u16::from_le_bytes(buffer);
     item_count
 }
 
@@ -86,7 +88,10 @@ fn read_f64_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16)
     column
 }
 
-fn read_string_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16) -> Vec<std::string::String> {
+fn read_string_column<R: Read>(
+    reader: &mut std::io::BufReader<R>,
+    item_count: u16,
+) -> Vec<std::string::String> {
     let mut column = Vec::new();
     for _ in 0..item_count {
         let mut buffer = [0u8; 1];
@@ -169,6 +174,10 @@ fn query_1() {
         }
     }
 
+    print_state(state);
+}
+
+fn print_state(state: [Option<QueryOneState>; 256*256]) {
     for i in 0..256 {
         for j in 0..256 {
             if state[i * 256 + j] != None {
@@ -205,50 +214,47 @@ struct LineItem {
     l_tax: f64,
 }
 
-fn save_data() {
-    let conn = duckdb::Connection::open("db").unwrap();
-    let mut stmt = conn.prepare("SELECT l_returnflag, l_linestatus, l_quantity, l_extendedprice, l_discount, l_tax FROM lineitem where l_shipdate <= CAST('1998-09-02' AS date)").unwrap();
-
-    let mut rows = stmt.query([]).unwrap().mapped(|row| {
-        Ok(LineItem {
+impl<'a> From<&Row<'a>> for LineItem {
+    fn from(row: &Row) -> Self {
+        LineItem {
             l_returnflag: row.get(0).unwrap(),
             l_linestatus: row.get(1).unwrap(),
             l_quantity: row.get(2).unwrap(),
             l_extendedprice: row.get(3).unwrap(),
             l_discount: row.get(4).unwrap(),
             l_tax: row.get(5).unwrap(),
-        })
-    });
+        }
+    }
+}
+
+pub struct QueryResult<'a> {
+    stmt: duckdb::Statement<'a>,
+}
+
+impl<'a> QueryResult<'a> {
+    fn new(conn: &'a Connection) -> Result<QueryResult<'a>, duckdb::Error> {
+        let stmt = conn.prepare("SELECT l_returnflag, l_linestatus, l_quantity, l_extendedprice, l_discount, l_tax FROM lineitem where l_shipdate <= CAST('1998-09-02' AS date)")?;
+        Ok(QueryResult { stmt })
+    }
+
+    fn iter_records(
+        &'a mut self,
+    ) -> Result<impl Iterator<Item = Result<LineItem, duckdb::Error>> + 'a, duckdb::Error> {
+        Ok(self.stmt.query_map([], |row| Ok(LineItem::from(row)))?)
+    }
+}
+
+fn save_data() {
+    let conn = duckdb::Connection::open("db").unwrap();
+    let mut result = QueryResult::new(&conn).unwrap();
 
     let file = std::fs::File::create("lineitems.bin").expect("Failed to create file");
     let mut writer = std::io::BufWriter::new(file);
 
-    /*
-    sum(l_quantity) AS sum_qty,
-    sum(l_extendedprice) AS sum_base_price,
-    sum(l_extendedprice * (1 - l_discount)) AS sum_disc_price,
-    sum(l_extendedprice * (1 - l_discount) * (1 + l_tax)) AS sum_charge,
-    avg(l_quantity) AS avg_qty,
-    avg(l_extendedprice) AS avg_price,
-    avg(l_discount) AS avg_disc,*/
-
-    while let Some(row_result) = rows.next() {
+    for row_result in result.iter_records().unwrap() {
         let lineitem = row_result.unwrap();
-        //let lineitem = row.unwrap();
         write_line_item(&mut writer, lineitem);
     }
-    // while let Some(row) = rows.next().unwrap() {
-    //     let lineitem = LineItem {
-    //         l_returnflag: row.get(0).unwrap(),
-    //         l_linestatus: row.get(1).unwrap(),
-    //         l_quantity: row.get(2).unwrap(),
-    //         l_extendedprice: row.get(3).unwrap(),
-    //         l_discount: row.get(4).unwrap(),
-    //         l_tax: row.get(5).unwrap(),
-    //     };
-
-    //     write_line_item(&mut writer, lineitem);
-    // }
 }
 
 fn write_line_item(writer: &mut std::io::BufWriter<std::fs::File>, lineitem: LineItem) {
@@ -299,9 +305,49 @@ fn main() {
 }
 
 fn query_1_column() {
-    todo!()
+    let file = std::fs::File::open("lineitems_column.bin").expect("Failed to open file");
+    let mut reader = std::io::BufReader::new(file);
+    let mut state: [Option<QueryOneState>; 256 * 256] = array::from_fn(|_x| None);
+
+    loop {
+        if reader.fill_buf().unwrap().is_empty() {
+            println!("End of file");
+            break;
+        }
+        let lineitems = read_row_group(&mut reader);
+        for lineitem in lineitems {
+            let array_location = (lineitem.l_returnflag.as_bytes()[0] as usize) * 256
+                + (lineitem.l_linestatus.as_bytes()[0] as usize);
+            let current_state = state[array_location].get_or_insert_default();
+            current_state.sum_qty += lineitem.l_quantity;
+            current_state.sum_base_price += lineitem.l_extendedprice;
+            current_state.sum_disc_price += lineitem.l_extendedprice * (1.0 - lineitem.l_discount);
+            current_state.sum_charge +=
+                lineitem.l_extendedprice * (1.0 - lineitem.l_discount) * (1.0 + lineitem.l_tax);
+            current_state.count += 1;
+        }
+    }
+    print_state(state);
 }
 
 fn save_data_column() {
-    todo!()
+    let conn = duckdb::Connection::open("db").unwrap();
+    let mut result = QueryResult::new(&conn).unwrap();
+    let file = std::fs::File::create("lineitems_column.bin").expect("Failed to create file");
+    let mut writer = std::io::BufWriter::new(file);
+    let mut batch = Vec::with_capacity(1000);
+
+    for row_result in result.iter_records().unwrap() {
+        let lineitem = row_result.unwrap();
+        batch.push(lineitem);
+
+        if batch.len() == 1000 {
+            write_row_group(&batch, &mut writer);
+            batch.clear();
+        }
+    }
+
+    if !batch.is_empty() {
+        write_row_group(&batch, &mut writer);
+    }
 }
