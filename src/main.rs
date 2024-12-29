@@ -304,6 +304,28 @@ fn main() {
     //query_1();
 }
 
+fn update_state_from_row_group<R: Read>(reader: &mut std::io::BufReader<R>, state: &mut [Option<QueryOneState>; 256*256]) -> () {
+    let item_count = read_u16(reader);
+    let linestatus = read_string_column(reader, item_count);
+    let returnflag = read_string_column(reader, item_count);
+    let quantity = read_f64_column(reader, item_count);
+    let discount = read_f64_column(reader, item_count);
+    let tax = read_f64_column(reader, item_count);
+    let extendedprice = read_f64_column(reader, item_count);
+
+    for i in 0..item_count {
+        let array_location = (returnflag[i as usize].as_bytes()[0] as usize) * 256
+            + (linestatus[i as usize].as_bytes()[0] as usize);
+        let current_state = state[array_location].get_or_insert_default();
+        current_state.sum_qty += quantity[i as usize];
+        current_state.sum_base_price += extendedprice[i as usize];
+        current_state.sum_disc_price += extendedprice[i as usize] * (1.0 - discount[i as usize]);
+        current_state.sum_charge +=
+        extendedprice[i as usize] * (1.0 - discount[i as usize]) * (1.0 + tax[i as usize]);
+        current_state.count += 1;
+    }
+}
+
 fn query_1_column() {
     let file = std::fs::File::open("lineitems_column.bin").expect("Failed to open file");
     let mut reader = std::io::BufReader::new(file);
@@ -314,18 +336,7 @@ fn query_1_column() {
             println!("End of file");
             break;
         }
-        let lineitems = read_row_group(&mut reader);
-        for lineitem in lineitems {
-            let array_location = (lineitem.l_returnflag.as_bytes()[0] as usize) * 256
-                + (lineitem.l_linestatus.as_bytes()[0] as usize);
-            let current_state = state[array_location].get_or_insert_default();
-            current_state.sum_qty += lineitem.l_quantity;
-            current_state.sum_base_price += lineitem.l_extendedprice;
-            current_state.sum_disc_price += lineitem.l_extendedprice * (1.0 - lineitem.l_discount);
-            current_state.sum_charge +=
-                lineitem.l_extendedprice * (1.0 - lineitem.l_discount) * (1.0 + lineitem.l_tax);
-            current_state.count += 1;
-        }
+        update_state_from_row_group(&mut reader, &mut state);
     }
     print_state(state);
 }
