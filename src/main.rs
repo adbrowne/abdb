@@ -79,12 +79,7 @@ fn read_u16<R: Read>(reader: &mut std::io::BufReader<R>) -> u16 {
 
 fn read_u16_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16) -> U16column {
     let mut data = [0u16; MAX_ROW_GROUP_SIZE];
-    for i in 0..item_count {
-        let mut buffer = [0u8; 2];
-        reader.read_exact(&mut buffer).expect("Failed to read");
-        let value = u16::from_le_bytes(buffer);
-        data[i as usize] = value;
-    }
+    reader.read_exact(bytemuck::cast_slice_mut(&mut data[0..item_count as usize])).expect("Failed to read");
     U16column {
         data,
         size: item_count as usize,
@@ -99,13 +94,9 @@ fn read_f64_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16)
         .collect()
 }
 
-fn read_u8_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16) -> Vec<u8> {
-    let mut column = Vec::new();
-    for _ in 0..item_count {
-        let mut buffer = [0u8; 1];
-        reader.read_exact(&mut buffer).expect("Failed to read");
-        column.push(buffer[0]);
-    }
+fn read_u8_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16) -> [u8; MAX_ROW_GROUP_SIZE] {
+    let mut column = [0u8; MAX_ROW_GROUP_SIZE];
+    reader.read_exact(&mut column[0..item_count as usize]).expect("Failed to read");
     column
 }
 
@@ -207,6 +198,25 @@ fn print_state(state: [Option<QueryOneState>; 256*256]) {
                     l_linestatus,
                     state[i * 256 + j]
                 );
+            }
+        }
+    }
+}
+
+fn print_state_column(state: [Option<QueryOneStateColumn>; 256*256]) {
+    for i in 0..256 {
+        for j in 0..256 {
+            if let Some(state_column) = &state[i * 256 + j] {
+                let l_returnflag = String::from_utf8(vec![i as u8]).unwrap();
+                let l_linestatus = String::from_utf8(vec![j as u8]).unwrap();
+                let state = QueryOneState {
+                    count: state_column.count,
+                    sum_qty: state_column.sum_qty as f64 / 100.0,
+                    sum_base_price: state_column.sum_base_price as f64 / 100.0,
+                    sum_disc_price: state_column.sum_base_price as f64 / 100.0 * (1.0 - state_column.sum_discount as f64 / 100.0),
+                    sum_charge: state_column.sum_base_price as f64 / 100.0 * (1.0 - state_column.sum_discount as f64 / 100.0) * (1.0 + state_column.sum_tax as f64 / 100.0),
+                };
+                println!("{}, {}, {:?}", l_returnflag, l_linestatus, state);
             }
         }
     }
@@ -328,7 +338,7 @@ struct U16column {
     size: usize,
 }
 
-fn update_state_from_row_group<R: Read>(reader: &mut std::io::BufReader<R>, state: &mut [Option<QueryOneState>; 256*256]) -> () {
+fn update_state_from_row_group<R: Read>(reader: &mut std::io::BufReader<R>, state: &mut [Option<QueryOneStateColumn>; 256*256]) -> () {
     let item_count = read_u16(reader);
     let linestatus = read_u8_column(reader, item_count);
     let returnflag = read_u8_column(reader, item_count);
@@ -346,18 +356,27 @@ fn update_state_from_row_group<R: Read>(reader: &mut std::io::BufReader<R>, stat
             last_linestatus = linestatus[i as usize];
             current_state = state[(last_returnflag as usize) * 256 + (last_linestatus as usize)].get_or_insert_default();
         }
-        current_state.sum_qty += decompress_f64(quantity.data[i as usize]);
-        current_state.sum_base_price += decompress_f64(extendedprice.data[i as usize]);
-        current_state.sum_disc_price += decompress_f64(extendedprice.data[i as usize]) * (1.0 - decompress_f64(discount.data[i as usize]));
-        current_state.sum_charge += decompress_f64(extendedprice.data[i as usize]) * (1.0 - decompress_f64(discount.data[i as usize])) * (1.0 + decompress_f64(tax.data[i as usize]));
+        current_state.sum_qty += quantity.data[i as usize] as u64;
+        current_state.sum_base_price += extendedprice.data[i as usize] as u64;
+        current_state.sum_discount += discount.data[i as usize] as u64;
+        current_state.sum_tax += tax.data[i as usize] as u64;
         current_state.count += 1;
     }
+}
+
+#[derive(Debug, Default, PartialEq, Clone)]
+struct QueryOneStateColumn {
+    count: u64,
+    sum_qty: u64,
+    sum_base_price: u64,
+    sum_discount: u64,
+    sum_tax: u64,
 }
 
 fn query_1_column() {
     let file = std::fs::File::open("lineitems_column.bin").expect("Failed to open file");
     let mut reader = std::io::BufReader::new(file);
-    let mut state: [Option<QueryOneState>; 256 * 256] = array::from_fn(|_x| None);
+    let mut state: [Option<QueryOneStateColumn>; 256 * 256] = array::from_fn(|_x| None);
 
     loop {
         if reader.fill_buf().unwrap().is_empty() {
@@ -366,7 +385,7 @@ fn query_1_column() {
         }
         update_state_from_row_group(&mut reader, &mut state);
     }
-    print_state(state);
+    print_state_column(state);
 }
 
 fn save_data_column() {
