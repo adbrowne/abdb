@@ -77,13 +77,34 @@ fn read_u16<R: Read>(reader: &mut std::io::BufReader<R>) -> u16 {
     item_count
 }
 
-fn read_f64_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16) -> Vec<f64> {
-    let mut column = Vec::new();
-    for _ in 0..item_count {
+fn read_u16_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16) -> U16column {
+    let mut data = [0u16; MAX_ROW_GROUP_SIZE];
+    for i in 0..item_count {
         let mut buffer = [0u8; 2];
         reader.read_exact(&mut buffer).expect("Failed to read");
-        let value = decompress_f64(u16::from_le_bytes(buffer));
-        column.push(value);
+        let value = u16::from_le_bytes(buffer);
+        data[i as usize] = value;
+    }
+    U16column {
+        data,
+        size: item_count as usize,
+    }
+}
+
+fn read_f64_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16) -> Vec<f64> {
+    read_u16_column(reader, item_count)
+        .data
+        .iter()
+        .map(|x| decompress_f64(*x))
+        .collect()
+}
+
+fn read_u8_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16) -> Vec<u8> {
+    let mut column = Vec::new();
+    for _ in 0..item_count {
+        let mut buffer = [0u8; 1];
+        reader.read_exact(&mut buffer).expect("Failed to read");
+        column.push(buffer[0]);
     }
     column
 }
@@ -92,13 +113,10 @@ fn read_string_column<R: Read>(
     reader: &mut std::io::BufReader<R>,
     item_count: u16,
 ) -> Vec<std::string::String> {
-    let mut column = Vec::new();
-    for _ in 0..item_count {
-        let mut buffer = [0u8; 1];
-        reader.read_exact(&mut buffer).expect("Failed to read");
-        column.push(String::from_utf8(buffer.to_vec()).expect("Failed to convert to string"));
-    }
-    column
+    read_u8_column(reader, item_count)
+        .iter()
+        .map(|x| String::from_utf8(vec![*x]).expect("Failed to convert to string"))
+        .collect()
 }
 
 fn write_row_group<W: Write>(lineitems: &[LineItem], writer: &mut std::io::BufWriter<W>) {
@@ -304,24 +322,34 @@ fn main() {
     //query_1();
 }
 
+static MAX_ROW_GROUP_SIZE: usize = 1000;
+struct U16column {
+    data: [u16; MAX_ROW_GROUP_SIZE],
+    size: usize,
+}
+
 fn update_state_from_row_group<R: Read>(reader: &mut std::io::BufReader<R>, state: &mut [Option<QueryOneState>; 256*256]) -> () {
     let item_count = read_u16(reader);
-    let linestatus = read_string_column(reader, item_count);
-    let returnflag = read_string_column(reader, item_count);
-    let quantity = read_f64_column(reader, item_count);
-    let discount = read_f64_column(reader, item_count);
-    let tax = read_f64_column(reader, item_count);
-    let extendedprice = read_f64_column(reader, item_count);
+    let linestatus = read_u8_column(reader, item_count);
+    let returnflag = read_u8_column(reader, item_count);
+    let quantity = read_u16_column(reader, item_count);
+    let discount = read_u16_column(reader, item_count);
+    let tax = read_u16_column(reader, item_count);
+    let extendedprice = read_u16_column(reader, item_count);
 
+    let mut last_returnflag = returnflag[0];
+    let mut last_linestatus = linestatus[0];
+    let mut current_state = state[(last_returnflag as usize) * 256 + (last_linestatus as usize)].get_or_insert_default();
     for i in 0..item_count {
-        let array_location = (returnflag[i as usize].as_bytes()[0] as usize) * 256
-            + (linestatus[i as usize].as_bytes()[0] as usize);
-        let current_state = state[array_location].get_or_insert_default();
-        current_state.sum_qty += quantity[i as usize];
-        current_state.sum_base_price += extendedprice[i as usize];
-        current_state.sum_disc_price += extendedprice[i as usize] * (1.0 - discount[i as usize]);
-        current_state.sum_charge +=
-        extendedprice[i as usize] * (1.0 - discount[i as usize]) * (1.0 + tax[i as usize]);
+        if last_returnflag != returnflag[i as usize] || last_linestatus != linestatus[i as usize] {
+            last_returnflag = returnflag[i as usize];
+            last_linestatus = linestatus[i as usize];
+            current_state = state[(last_returnflag as usize) * 256 + (last_linestatus as usize)].get_or_insert_default();
+        }
+        current_state.sum_qty += decompress_f64(quantity.data[i as usize]);
+        current_state.sum_base_price += decompress_f64(extendedprice.data[i as usize]);
+        current_state.sum_disc_price += decompress_f64(extendedprice.data[i as usize]) * (1.0 - decompress_f64(discount.data[i as usize]));
+        current_state.sum_charge += decompress_f64(extendedprice.data[i as usize]) * (1.0 - decompress_f64(discount.data[i as usize])) * (1.0 + decompress_f64(tax.data[i as usize]));
         current_state.count += 1;
     }
 }
