@@ -32,7 +32,7 @@ struct QueryOneState {
 }
 
 fn read_file() {
-    let file = std::fs::File::open("lineitems.bin").expect("Failed to open file");
+    let file = std::fs::File::open("lineitems_column.bin").expect("Failed to open file");
 
     let mut reader = std::io::BufReader::new(file);
 
