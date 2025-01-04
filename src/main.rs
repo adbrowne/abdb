@@ -1,6 +1,5 @@
 use std::{
-    array::{self},
-    io::{BufRead, Read, Write},
+    array::{self}, cmp::{max, min}, io::{BufRead, Read, Write}, result
 };
 
 use clap::{Parser, Subcommand};
@@ -94,9 +93,18 @@ fn read_f64_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16)
         .collect()
 }
 
-fn read_u8_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16) -> [u8; MAX_ROW_GROUP_SIZE] {
-    let mut column = [0u8; MAX_ROW_GROUP_SIZE];
-    reader.read_exact(&mut column[0..item_count as usize]).expect("Failed to read");
+fn read_u8_string_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16) -> [(u8,u16); MAX_ROW_GROUP_SIZE] {
+    let mut column = [(0u8,0u16); MAX_ROW_GROUP_SIZE];
+    let mut buffer = [0u8; 3]; 
+    let mut i = 0;
+    let mut remaining = item_count as i16;
+    while remaining > 0 {
+        reader.read_exact(&mut buffer).expect("Failed to read");
+        let count = u16::from_le_bytes([buffer[1], buffer[2]]);
+        column[i] = (buffer[0], count);
+        remaining -= column[i].1 as i16;
+        i += 1;
+    }
     column
 }
 
@@ -104,10 +112,20 @@ fn read_string_column<R: Read>(
     reader: &mut std::io::BufReader<R>,
     item_count: u16,
 ) -> Vec<std::string::String> {
-    read_u8_column(reader, item_count)
-        .iter()
-        .map(|x| String::from_utf8(vec![*x]).expect("Failed to convert to string"))
-        .collect()
+    let mut result = Vec::new();
+    let u8_value = 0u8;
+    let repeat_count = 0u8;
+    let mut remaining = item_count;
+    let mut buffer = [0u8; 2]; 
+    while remaining > 0 {
+        reader.read_exact(&mut buffer).expect("Failed to read");
+        let (u8_value, repeat_count) = (buffer[0], buffer[1]);
+        let value = String::from_utf8(vec![u8_value]).expect("Failed to convert to string");
+        let r = vec![value; repeat_count as usize];
+        result.extend(r);
+        remaining -= repeat_count as u16;
+    }
+    result
 }
 
 fn write_row_group<W: Write>(lineitems: &[LineItem], writer: &mut std::io::BufWriter<W>) {
@@ -125,9 +143,15 @@ fn write_string_column<'a, I, W: Write>(column: I, writer: &mut std::io::BufWrit
 where
     I: Iterator<Item = &'a String>,
 {
-    for value in column {
+    let mut iter = column.peekable();
+    while let Some(value) = iter.next() {
+        let mut count = 1;
+        while iter.peek() == Some(&value) {
+            iter.next();
+            count += 1;
+        }
         writer
-            .write(&[value.as_bytes()[0]])
+            .write_all(&[value.as_bytes()[0], (count as u16).to_le_bytes()[0], (count as u16).to_le_bytes()[1]])
             .expect("Failed to write");
     }
 }
@@ -203,7 +227,7 @@ fn print_state(state: [Option<QueryOneState>; 256*256]) {
     }
 }
 
-fn print_state_column(state: [Option<QueryOneStateColumn>; 256*256]) {
+fn print_state_column(state: Vec<Option<QueryOneStateColumn>>) {
     for i in 0..256 {
         for j in 0..256 {
             if let Some(state_column) = &state[i * 256 + j] {
@@ -337,30 +361,43 @@ struct U16column {
     data: [u16; MAX_ROW_GROUP_SIZE],
     size: usize,
 }
+fn get_state_index(returnflag: u8, linestatus: u8) -> usize {
+    (returnflag as usize) * 256 + (linestatus as usize)
+}
 
-fn update_state_from_row_group<R: Read>(reader: &mut std::io::BufReader<R>, state: &mut [Option<QueryOneStateColumn>; 256*256]) -> () {
+fn update_state_from_row_group<R: Read>(reader: &mut std::io::BufReader<R>, state: &mut Vec<Option<QueryOneStateColumn>>) -> () {
     let item_count = read_u16(reader);
-    let linestatus = read_u8_column(reader, item_count);
-    let returnflag = read_u8_column(reader, item_count);
+    let mut linestatus = read_u8_string_column(reader, item_count);
+    let mut returnflag = read_u8_string_column(reader, item_count);
     let quantity = read_u16_column(reader, item_count);
     let discount = read_u16_column(reader, item_count);
     let tax = read_u16_column(reader, item_count);
     let extendedprice = read_u16_column(reader, item_count);
 
-    let mut last_returnflag = returnflag[0];
-    let mut last_linestatus = linestatus[0];
-    let mut current_state = state[(last_returnflag as usize) * 256 + (last_linestatus as usize)].get_or_insert_default();
-    for i in 0..item_count {
-        if last_returnflag != returnflag[i as usize] || last_linestatus != linestatus[i as usize] {
-            last_returnflag = returnflag[i as usize];
-            last_linestatus = linestatus[i as usize];
-            current_state = state[(last_returnflag as usize) * 256 + (last_linestatus as usize)].get_or_insert_default();
-        }
-        current_state.sum_qty += quantity.data[i as usize] as u64;
-        current_state.sum_base_price += extendedprice.data[i as usize] as u64;
-        current_state.sum_discount += discount.data[i as usize] as u64;
-        current_state.sum_tax += tax.data[i as usize] as u64;
-        current_state.count += 1;
+    let mut last_returnflag_index = 0;
+    let mut last_linestatus_index = 0;
+    let mut index: usize = 0;
+    while index < item_count as usize {
+        let last_returnflag = returnflag[last_returnflag_index];
+        let last_linestatus = linestatus[last_linestatus_index];
+        let run_length = min(last_returnflag.1, last_linestatus.1) as usize;
+
+        let current_state = state[get_state_index(last_returnflag.0, last_linestatus.0)].get_or_insert_default();
+
+        current_state.sum_qty += quantity.data[index as usize..(index + run_length) as usize].iter().map(|x| *x as u64).sum::<u64>();
+        current_state.sum_base_price += extendedprice.data[index as usize..(index + run_length) as usize].iter().map(|x| *x as u64).sum::<u64>();
+        current_state.sum_discount += discount.data[index as usize..(index + run_length) as usize].iter().map(|x| *x as u64).sum::<u64>();
+        current_state.sum_tax += tax.data[index as usize..(index + run_length) as usize].iter().map(|x| *x as u64).sum::<u64>();
+
+        returnflag[last_returnflag_index].1 -= run_length as u16;
+        linestatus[last_linestatus_index].1 -= run_length as u16;
+        if returnflag[last_returnflag_index].1 == 0 as u16 {
+            last_returnflag_index += 1;
+        } 
+        if linestatus[last_linestatus_index].1 == 0 as u16 {
+            last_linestatus_index += 1;
+        } 
+        index += run_length;
     }
 }
 
@@ -376,7 +413,7 @@ struct QueryOneStateColumn {
 fn query_1_column() {
     let file = std::fs::File::open("lineitems_column.bin").expect("Failed to open file");
     let mut reader = std::io::BufReader::new(file);
-    let mut state: [Option<QueryOneStateColumn>; 256 * 256] = array::from_fn(|_x| None);
+    let mut state: Vec<Option<QueryOneStateColumn>> = vec![None; 256*256];
 
     loop {
         if reader.fill_buf().unwrap().is_empty() {
@@ -394,12 +431,14 @@ fn save_data_column() {
     let file = std::fs::File::create("lineitems_column.bin").expect("Failed to create file");
     let mut writer = std::io::BufWriter::new(file);
     let mut batch = Vec::with_capacity(1000);
+    println!("save_data_column");
 
     for row_result in result.iter_records().unwrap() {
         let lineitem = row_result.unwrap();
         batch.push(lineitem);
 
         if batch.len() == 1000 {
+            batch.sort_by(|a, b| a.l_returnflag.cmp(&b.l_returnflag).then(a.l_linestatus.cmp(&b.l_linestatus)));
             write_row_group(&batch, &mut writer);
             batch.clear();
         }

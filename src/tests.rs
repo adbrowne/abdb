@@ -65,3 +65,44 @@ fn test_write_and_read_row_group() {
 
     assert_eq!(lineitems.to_vec(), read_lineitems);
 }
+#[test]
+fn test_update_state_from_row_group() {
+    // Add test for write_and_read_row_group function
+    let lineitems: [LineItem; 2000] = array::from_fn(|_| LineItem {
+        l_returnflag: "A".to_string(),
+        l_linestatus: "B".to_string(),
+        l_quantity: 1.0,
+        l_extendedprice: 2.0,
+        l_discount: 3.0,
+        l_tax: 4.0,
+    });
+    let buffer = Vec::new();
+    let mut writer = std::io::BufWriter::new(buffer);
+
+    write_row_group(&lineitems[0..1000], &mut writer);
+    write_row_group(&lineitems[1000..2000], &mut writer);
+
+    let binding = writer.into_inner().unwrap();
+    let mut reader = {
+        let buffer: &[u8] = &binding;
+        std::io::BufReader::new(buffer)
+    }; 
+
+    let mut state: Vec<Option<QueryOneStateColumn>> = vec![None; 256*256];
+
+    loop {
+        if reader.fill_buf().unwrap().is_empty() {
+            println!("End of file");
+            break;
+        }
+        update_state_from_row_group(&mut reader, &mut state);
+    }
+    assert_eq!(state[get_state_index(b'A', b'B')], Some(QueryOneStateColumn { count: 0, sum_qty: 200000, sum_base_price: 400000, sum_discount: 600000, sum_tax: 800000 }));
+}
+
+#[test]
+fn test_get_state_index() {
+    assert_eq!(get_state_index(b'A', b'F'), 65 * 256 + 70);
+    assert_eq!(get_state_index(b'B', b'O'), 66 * 256 + 79);
+    assert_eq!(get_state_index(b'C', b'N'), 67 * 256 + 78);
+}
