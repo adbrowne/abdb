@@ -95,17 +95,22 @@ fn read_f64_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16)
 
 fn read_u8_string_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16) -> [(u8,u16); MAX_ROW_GROUP_SIZE] {
     let mut column = [(0u8,0u16); MAX_ROW_GROUP_SIZE];
-    let mut buffer = [0u8; 3]; 
     let mut i = 0;
     let mut remaining = item_count as i16;
     while remaining > 0 {
-        reader.read_exact(&mut buffer).expect("Failed to read");
-        let count = u16::from_le_bytes([buffer[1], buffer[2]]);
-        column[i] = (buffer[0], count);
-        remaining -= column[i].1 as i16;
+        let (value, count ) = read_u8_string_entry(reader);
+        column[i] = (value, count);
+        remaining -= count as i16;
         i += 1;
     }
     column
+}
+
+fn read_u8_string_entry<R: Read>(reader: &mut std::io::BufReader<R>) -> (u8, u16){
+    let mut buffer = [0u8; 3]; 
+    reader.read_exact(&mut buffer).expect("Failed to read");
+    let count = u16::from_le_bytes([buffer[1], buffer[2]]);
+    (buffer[0], count)
 }
 
 fn read_string_column<R: Read>(
@@ -113,13 +118,9 @@ fn read_string_column<R: Read>(
     item_count: u16,
 ) -> Vec<std::string::String> {
     let mut result = Vec::new();
-    let u8_value = 0u8;
-    let repeat_count = 0u8;
     let mut remaining = item_count;
-    let mut buffer = [0u8; 2]; 
     while remaining > 0 {
-        reader.read_exact(&mut buffer).expect("Failed to read");
-        let (u8_value, repeat_count) = (buffer[0], buffer[1]);
+        let (u8_value, repeat_count ) = read_u8_string_entry(reader);
         let value = String::from_utf8(vec![u8_value]).expect("Failed to convert to string");
         let r = vec![value; repeat_count as usize];
         result.extend(r);
