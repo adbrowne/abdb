@@ -125,8 +125,41 @@ fn read_string_column<R: Read>(
     }
     result
 }
+struct TrackedWriter<W: Write> {
+    writer: std::io::BufWriter<W>,
+    bytes_written: usize,
+}
 
-fn write_row_group<W: Write>(lineitems: &[LineItem], writer: &mut std::io::BufWriter<W>) {
+impl<W: Write> TrackedWriter<W> {
+    fn new(writer: W) -> Self {
+        TrackedWriter {
+            writer: std::io::BufWriter::new(writer),
+            bytes_written: 0,
+        }
+    }
+
+    fn bytes_written(&self) -> usize {
+        self.bytes_written
+    }
+}
+
+impl<W: Write> Write for TrackedWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let bytes = self.writer.write(buf)?;
+        self.bytes_written += bytes;
+        Ok(bytes)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.writer.flush()
+    }
+}
+impl<W: Write> TrackedWriter<W> {
+    fn into_inner(self) -> std::io::BufWriter<W> {
+        self.writer
+    }
+}
+fn write_row_group<W: Write>(lineitems: &[LineItem], writer: &mut TrackedWriter<W>) {
     let item_count = (lineitems.len() as u16).to_le_bytes();
     writer.write(&item_count).expect("Failed to write");
     write_string_column(lineitems.iter().map(|x| &x.l_linestatus), writer);
@@ -137,7 +170,7 @@ fn write_row_group<W: Write>(lineitems: &[LineItem], writer: &mut std::io::BufWr
     write_f64_column(lineitems.iter().map(|x| x.l_extendedprice), writer);
 }
 
-fn write_string_column<'a, I, W: Write>(column: I, writer: &mut std::io::BufWriter<W>)
+fn write_string_column<'a, I, W: Write>(column: I, writer: &mut TrackedWriter<W>)
 where
     I: Iterator<Item = &'a String>,
 {
@@ -154,7 +187,7 @@ where
     }
 }
 
-fn write_f64_column<I, W: Write>(column: I, writer: &mut std::io::BufWriter<W>)
+fn write_f64_column<I, W: Write>(column: I, writer: &mut TrackedWriter<W>)
 where
     I: Iterator<Item = f64>,
 {
@@ -427,7 +460,7 @@ fn save_data_column() {
     let conn = duckdb::Connection::open("db").unwrap();
     let mut result = QueryResult::new(&conn).unwrap();
     let file = std::fs::File::create("lineitems_column.bin").expect("Failed to create file");
-    let mut writer = std::io::BufWriter::new(file);
+    let mut writer = TrackedWriter::new(std::io::BufWriter::new(file));
     let mut batch = Vec::with_capacity(1000);
     println!("save_data_column");
 

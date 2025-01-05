@@ -48,12 +48,12 @@ fn test_write_and_read_row_group() {
         l_tax: 4.0,
     });
     let buffer = Vec::new();
-    let mut writer = std::io::BufWriter::new(buffer);
+    let mut writer = TrackedWriter::new(std::io::BufWriter::new(buffer));
 
     write_row_group(&lineitems[0..9], &mut writer);
     write_row_group(&lineitems[9..20], &mut writer);
 
-    let binding = writer.into_inner().unwrap();
+    let binding = writer.into_inner().into_inner().unwrap().into_inner().unwrap();
     let mut reader = {
         let buffer: &[u8] = &binding;
         std::io::BufReader::new(buffer)
@@ -77,12 +77,12 @@ fn test_update_state_from_row_group() {
         l_tax: 4.0,
     });
     let buffer = Vec::new();
-    let mut writer = std::io::BufWriter::new(buffer);
+    let mut writer = TrackedWriter::new(std::io::BufWriter::new(buffer));
 
     write_row_group(&lineitems[0..1000], &mut writer);
     write_row_group(&lineitems[1000..2000], &mut writer);
 
-    let binding = writer.into_inner().unwrap();
+    let binding = writer.into_inner().into_inner().unwrap().into_inner().unwrap();
     let mut reader = {
         let buffer: &[u8] = &binding;
         std::io::BufReader::new(buffer)
