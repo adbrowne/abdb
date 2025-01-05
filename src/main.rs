@@ -118,13 +118,10 @@ fn read_string_column<R: Read>(
     item_count: u16,
 ) -> Vec<std::string::String> {
     let mut result = Vec::new();
-    let mut remaining = item_count;
-    while remaining > 0 {
-        let (u8_value, repeat_count ) = read_u8_string_entry(reader);
-        let value = String::from_utf8(vec![u8_value]).expect("Failed to convert to string");
-        let r = vec![value; repeat_count as usize];
+    for (u8_value, repeat_count) in read_u8_string_column(reader, item_count).iter() {
+        let value = String::from_utf8(vec![*u8_value]).expect("Failed to convert to string");
+        let r = vec![value; *repeat_count as usize];
         result.extend(r);
-        remaining -= repeat_count as u16;
     }
     result
 }
