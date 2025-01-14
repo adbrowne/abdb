@@ -36,7 +36,7 @@ fn read_file() {
     let mut reader = std::io::BufReader::new(file);
 
     loop {
-        let mut buffer = [0u8; 34]; // 1 byte for l_returnflag, 1 byte for l_linestatus, 8 bytes for l_quantity
+        let mut buffer = [0u8; 8000]; // 1 byte for l_returnflag, 1 byte for l_linestatus, 8 bytes for l_quantity
         match reader.read_exact(&mut buffer) {
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
@@ -387,7 +387,7 @@ fn main() {
     //query_1();
 }
 
-static MAX_ROW_GROUP_SIZE: usize = 1000;
+static MAX_ROW_GROUP_SIZE: usize = 8000;
 struct U16column {
     data: [u16; MAX_ROW_GROUP_SIZE],
     size: usize,
@@ -461,14 +461,14 @@ fn save_data_column() {
     let mut result = QueryResult::new(&conn).unwrap();
     let file = std::fs::File::create("lineitems_column.bin").expect("Failed to create file");
     let mut writer = TrackedWriter::new(std::io::BufWriter::new(file));
-    let mut batch = Vec::with_capacity(1000);
+    let mut batch = Vec::with_capacity(8000);
     println!("save_data_column");
 
     for row_result in result.iter_records().unwrap() {
         let lineitem = row_result.unwrap();
         batch.push(lineitem);
 
-        if batch.len() == 1000 {
+        if batch.len() == 8000 {
             batch.sort_by(|a, b| a.l_returnflag.cmp(&b.l_returnflag).then(a.l_linestatus.cmp(&b.l_linestatus)));
             write_row_group(&batch, &mut writer);
             batch.clear();
