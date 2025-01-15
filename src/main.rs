@@ -1,9 +1,19 @@
 use std::{
-    array::{self}, cmp::{max, min}, io::{BufRead, Read, Write}, result
+    array::{self},
+    cmp::{max, min},
+    io::{BufRead, Read, Write},
+    result,
 };
 
+use datafusion::prelude::*;
 use clap::{Parser, Subcommand};
+use datafusion::{arrow::array::{Float64Array, StringArray, DictionaryArray, StringDictionaryBuilder}, parquet::arrow::{self, arrow_reader::ParquetRecordBatchReaderBuilder}};
+use datafusion::arrow::datatypes::{DataType, Field, Schema, Int32Type};
+use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::parquet::arrow::ArrowWriter;
+
 use duckdb::{Connection, Row};
+use std::sync::Arc;
 mod tests;
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -16,8 +26,10 @@ struct Cli {
 enum Commands {
     WriteLineItems,
     WriteLineItemsColumn,
+    WriteLineItemsParquet,
     RunQuery1,
     RunQuery1Column,
+    RunQuery1Parquet,
     ReadFile,
 }
 
@@ -78,7 +90,9 @@ fn read_u16<R: Read>(reader: &mut std::io::BufReader<R>) -> u16 {
 
 fn read_u16_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16) -> U16column {
     let mut data = [0u16; MAX_ROW_GROUP_SIZE];
-    reader.read_exact(bytemuck::cast_slice_mut(&mut data[0..item_count as usize])).expect("Failed to read");
+    reader
+        .read_exact(bytemuck::cast_slice_mut(&mut data[0..item_count as usize]))
+        .expect("Failed to read");
     U16column {
         data,
         size: item_count as usize,
@@ -93,12 +107,15 @@ fn read_f64_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16)
         .collect()
 }
 
-fn read_u8_string_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16) -> [(u8,u16); MAX_ROW_GROUP_SIZE] {
-    let mut column = [(0u8,0u16); MAX_ROW_GROUP_SIZE];
+fn read_u8_string_column<R: Read>(
+    reader: &mut std::io::BufReader<R>,
+    item_count: u16,
+) -> [(u8, u16); MAX_ROW_GROUP_SIZE] {
+    let mut column = [(0u8, 0u16); MAX_ROW_GROUP_SIZE];
     let mut i = 0;
     let mut remaining = item_count as i16;
     while remaining > 0 {
-        let (value, count ) = read_u8_string_entry(reader);
+        let (value, count) = read_u8_string_entry(reader);
         column[i] = (value, count);
         remaining -= count as i16;
         i += 1;
@@ -106,8 +123,8 @@ fn read_u8_string_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count
     column
 }
 
-fn read_u8_string_entry<R: Read>(reader: &mut std::io::BufReader<R>) -> (u8, u16){
-    let mut buffer = [0u8; 3]; 
+fn read_u8_string_entry<R: Read>(reader: &mut std::io::BufReader<R>) -> (u8, u16) {
+    let mut buffer = [0u8; 3];
     reader.read_exact(&mut buffer).expect("Failed to read");
     let count = u16::from_le_bytes([buffer[1], buffer[2]]);
     (buffer[0], count)
@@ -182,7 +199,11 @@ where
             count += 1;
         }
         writer
-            .write_all(&[value.as_bytes()[0], (count as u16).to_le_bytes()[0], (count as u16).to_le_bytes()[1]])
+            .write_all(&[
+                value.as_bytes()[0],
+                (count as u16).to_le_bytes()[0],
+                (count as u16).to_le_bytes()[1],
+            ])
             .expect("Failed to write");
     }
 }
@@ -241,7 +262,7 @@ fn query_1() {
     print_state(state);
 }
 
-fn print_state(state: [Option<QueryOneState>; 256*256]) {
+fn print_state(state: [Option<QueryOneState>; 256 * 256]) {
     for i in 0..256 {
         for j in 0..256 {
             if state[i * 256 + j] != None {
@@ -268,8 +289,11 @@ fn print_state_column(state: Vec<Option<QueryOneStateColumn>>) {
                     count: state_column.count,
                     sum_qty: state_column.sum_qty as f64 / 100.0,
                     sum_base_price: state_column.sum_base_price as f64 / 100.0,
-                    sum_disc_price: state_column.sum_base_price as f64 / 100.0 * (1.0 - state_column.sum_discount as f64 / 100.0),
-                    sum_charge: state_column.sum_base_price as f64 / 100.0 * (1.0 - state_column.sum_discount as f64 / 100.0) * (1.0 + state_column.sum_tax as f64 / 100.0),
+                    sum_disc_price: state_column.sum_base_price as f64 / 100.0
+                        * (1.0 - state_column.sum_discount as f64 / 100.0),
+                    sum_charge: state_column.sum_base_price as f64 / 100.0
+                        * (1.0 - state_column.sum_discount as f64 / 100.0)
+                        * (1.0 + state_column.sum_tax as f64 / 100.0),
                 };
                 println!("{}, {}, {:?}", l_returnflag, l_linestatus, state);
             }
@@ -372,8 +396,15 @@ fn main() {
         Some(Commands::WriteLineItemsColumn {}) => {
             save_data_column();
         }
+        Some(Commands::WriteLineItemsParquet {}) => {
+            //save_data_parquet();
+            save_data_parquet_with_dictionary();
+        }
         Some(Commands::RunQuery1Column {}) => {
             query_1_column();
+        }
+        Some(Commands::RunQuery1Parquet) => {
+            query_1_column_parquet();
         }
         Some(Commands::RunQuery1) => {
             query_1();
@@ -396,7 +427,10 @@ fn get_state_index(returnflag: u8, linestatus: u8) -> usize {
     (returnflag as usize) * 256 + (linestatus as usize)
 }
 
-fn update_state_from_row_group<R: Read>(reader: &mut std::io::BufReader<R>, state: &mut Vec<Option<QueryOneStateColumn>>) -> () {
+fn update_state_from_row_group<R: Read>(
+    reader: &mut std::io::BufReader<R>,
+    state: &mut Vec<Option<QueryOneStateColumn>>,
+) -> () {
     let item_count = read_u16(reader);
     let mut linestatus = read_u8_string_column(reader, item_count);
     let mut returnflag = read_u8_string_column(reader, item_count);
@@ -413,21 +447,35 @@ fn update_state_from_row_group<R: Read>(reader: &mut std::io::BufReader<R>, stat
         let last_linestatus = linestatus[last_linestatus_index];
         let run_length = min(last_returnflag.1, last_linestatus.1) as usize;
 
-        let current_state = state[get_state_index(last_returnflag.0, last_linestatus.0)].get_or_insert_default();
+        let current_state =
+            state[get_state_index(last_returnflag.0, last_linestatus.0)].get_or_insert_default();
 
-        current_state.sum_qty += quantity.data[index as usize..(index + run_length) as usize].iter().map(|x| *x as u64).sum::<u64>();
-        current_state.sum_base_price += extendedprice.data[index as usize..(index + run_length) as usize].iter().map(|x| *x as u64).sum::<u64>();
-        current_state.sum_discount += discount.data[index as usize..(index + run_length) as usize].iter().map(|x| *x as u64).sum::<u64>();
-        current_state.sum_tax += tax.data[index as usize..(index + run_length) as usize].iter().map(|x| *x as u64).sum::<u64>();
+        current_state.sum_qty += quantity.data[index as usize..(index + run_length) as usize]
+            .iter()
+            .map(|x| *x as u64)
+            .sum::<u64>();
+        current_state.sum_base_price += extendedprice.data
+            [index as usize..(index + run_length) as usize]
+            .iter()
+            .map(|x| *x as u64)
+            .sum::<u64>();
+        current_state.sum_discount += discount.data[index as usize..(index + run_length) as usize]
+            .iter()
+            .map(|x| *x as u64)
+            .sum::<u64>();
+        current_state.sum_tax += tax.data[index as usize..(index + run_length) as usize]
+            .iter()
+            .map(|x| *x as u64)
+            .sum::<u64>();
 
         returnflag[last_returnflag_index].1 -= run_length as u16;
         linestatus[last_linestatus_index].1 -= run_length as u16;
         if returnflag[last_returnflag_index].1 == 0 as u16 {
             last_returnflag_index += 1;
-        } 
+        }
         if linestatus[last_linestatus_index].1 == 0 as u16 {
             last_linestatus_index += 1;
-        } 
+        }
         index += run_length;
     }
 }
@@ -444,7 +492,7 @@ struct QueryOneStateColumn {
 fn query_1_column() {
     let file = std::fs::File::open("lineitems_column.bin").expect("Failed to open file");
     let mut reader = std::io::BufReader::new(file);
-    let mut state: Vec<Option<QueryOneStateColumn>> = vec![None; 256*256];
+    let mut state: Vec<Option<QueryOneStateColumn>> = vec![None; 256 * 256];
 
     loop {
         if reader.fill_buf().unwrap().is_empty() {
@@ -469,7 +517,11 @@ fn save_data_column() {
         batch.push(lineitem);
 
         if batch.len() == 8000 {
-            batch.sort_by(|a, b| a.l_returnflag.cmp(&b.l_returnflag).then(a.l_linestatus.cmp(&b.l_linestatus)));
+            batch.sort_by(|a, b| {
+                a.l_returnflag
+                    .cmp(&b.l_returnflag)
+                    .then(a.l_linestatus.cmp(&b.l_linestatus))
+            });
             write_row_group(&batch, &mut writer);
             batch.clear();
         }
@@ -478,4 +530,300 @@ fn save_data_column() {
     if !batch.is_empty() {
         write_row_group(&batch, &mut writer);
     }
+}
+
+use datafusion::parquet::basic::Compression;
+use datafusion::parquet::file::properties::WriterProperties;
+
+fn save_data_parquet() {
+    let conn = duckdb::Connection::open("db").unwrap();
+    let mut result = QueryResult::new(&conn).unwrap();
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new(
+            "l_returnflag",
+            DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8)),
+            false,
+        ),
+        Field::new(
+            "l_linestatus",
+            DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8)),
+            false,
+        ),
+        Field::new("l_quantity", DataType::Float64, false),
+        Field::new("l_extendedprice", DataType::Float64, false),
+        Field::new("l_discount", DataType::Float64, false),
+        Field::new("l_tax", DataType::Float64, false),
+    ]));
+
+    let writer_properties = WriterProperties::builder()
+        .set_compression(Compression::SNAPPY) // Enable Snappy compression
+        .set_dictionary_enabled(true) // Enable dictionary encoding
+        .build();
+
+    let file = std::fs::File::create("lineitems.parquet").expect("Failed to create file");
+    let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(writer_properties))
+        .expect("Failed to create writer");
+
+    let mut l_returnflag = Vec::new();
+    let mut l_linestatus = Vec::new();
+    let mut l_quantity = Vec::new();
+    let mut l_extendedprice = Vec::new();
+    let mut l_discount = Vec::new();
+    let mut l_tax = Vec::new();
+
+    let batch_size = 8000;
+
+    for row_result in result.iter_records().unwrap() {
+        let lineitem = row_result.unwrap();
+        l_returnflag.push(lineitem.l_returnflag);
+        l_linestatus.push(lineitem.l_linestatus);
+        l_quantity.push(lineitem.l_quantity);
+        l_extendedprice.push(lineitem.l_extendedprice);
+        l_discount.push(lineitem.l_discount);
+        l_tax.push(lineitem.l_tax);
+
+        if l_returnflag.len() == batch_size {
+            write_parquet_batch(
+                schema.clone(),
+                &mut writer,
+                l_returnflag,
+                l_linestatus,
+                l_quantity,
+                l_extendedprice,
+                l_discount,
+                l_tax,
+            );
+            l_returnflag = Vec::new();
+            l_linestatus = Vec::new();
+            l_quantity = Vec::new();
+            l_extendedprice = Vec::new();
+            l_discount = Vec::new();
+            l_tax = Vec::new();
+        }
+    }
+
+    write_parquet_batch(
+        schema,
+        &mut writer,
+        l_returnflag,
+        l_linestatus,
+        l_quantity,
+        l_extendedprice,
+        l_discount,
+        l_tax,
+    );
+    writer.close().expect("Failed to close writer");
+}
+
+fn write_parquet_batch(
+    schema: Arc<Schema>,
+    writer: &mut ArrowWriter<std::fs::File>,
+    l_returnflag: Vec<String>,
+    l_linestatus: Vec<String>,
+    l_quantity: Vec<f64>,
+    l_extendedprice: Vec<f64>,
+    l_discount: Vec<f64>,
+    l_tax: Vec<f64>,
+) {
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(StringArray::from(l_returnflag)),
+            Arc::new(StringArray::from(l_linestatus)),
+            Arc::new(Float64Array::from(l_quantity)),
+            Arc::new(Float64Array::from(l_extendedprice)),
+            Arc::new(Float64Array::from(l_discount)),
+            Arc::new(Float64Array::from(l_tax)),
+        ],
+    )
+    .expect("Failed to create record batch");
+
+    writer.write(&batch).expect("Failed to write batch");
+}
+
+fn query_1_column_parquet() {
+    // let file = std::fs::File::open("lineitems.parquet").expect("Failed to open file");
+    // let parquet_reader = datafusion::parquet::file::reader::SerializedFileReader::new(file)
+    //     .expect("Failed to create parquet reader");
+    
+        let file = std::fs::File::open("lineitems_with_dictionary.parquet").expect("Failed to open file");
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file).unwrap();
+        println!("Converted arrow schema is: {}", builder.schema());
+        
+        let mut arrow_reader = builder.build().unwrap();
+
+    let mut state: Vec<Option<QueryOneStateColumn>> = vec![None; 256 * 256];
+
+    for maybe_batch in arrow_reader {
+        let batch = maybe_batch.expect("Failed to read batch");
+        let l_quantity = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .expect("Failed to downcast column");
+        let l_extendedprice = batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .expect("Failed to downcast column");
+        let l_discount = batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .expect("Failed to downcast column");
+        let l_tax = batch
+            .column(5)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .expect("Failed to downcast column");
+        let l_returnflag = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<DictionaryArray<Int32Type>>()
+            .expect("Failed to downcast column");
+        let l_returnflag_values = l_returnflag
+            .values()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("Failed to downcast dictionary values");
+        let l_linestatus = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<DictionaryArray<Int32Type>>()
+            .expect("Failed to downcast column");
+        let l_linestatus_values = l_linestatus
+            .values()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("Failed to downcast dictionary values");
+        for i in 0..batch.num_rows() {
+            let returnflag = l_returnflag_values.value(l_returnflag.keys().value(i) as usize).as_bytes()[0];
+            let linestatus = l_linestatus_values.value(l_linestatus.keys().value(i) as usize).as_bytes()[0];
+            let quantity = l_quantity.value(i);
+            let extendedprice = l_extendedprice.value(i);
+            let discount = l_discount.value(i);
+            let tax = l_tax.value(i);
+
+            let array_location = get_state_index(returnflag, linestatus);
+            let current_state = state[array_location].get_or_insert_default();
+            current_state.sum_qty += (quantity * 100.0) as u64;
+            current_state.sum_base_price += (extendedprice * 100.0) as u64;
+            current_state.sum_discount += (discount * 100.0) as u64;
+            current_state.sum_tax += (tax * 100.0) as u64;
+            current_state.count += 1;
+        }
+    }
+
+    print_state_column(state);
+}
+
+
+fn save_data_parquet_with_dictionary() {
+    let conn = duckdb::Connection::open("db").unwrap();
+    let mut result = QueryResult::new(&conn).unwrap();
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new(
+            "l_returnflag",
+            DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8)),
+            false,
+        ),
+        Field::new(
+            "l_linestatus",
+            DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8)),
+            false,
+        ),
+        Field::new("l_quantity", DataType::Float64, false),
+        Field::new("l_extendedprice", DataType::Float64, false),
+        Field::new("l_discount", DataType::Float64, false),
+        Field::new("l_tax", DataType::Float64, false),
+    ]));
+
+    let writer_properties = WriterProperties::builder()
+        .set_compression(Compression::SNAPPY) // Enable Snappy compression
+        .set_dictionary_enabled(true) // Enable dictionary encoding
+        .build();
+
+    let file = std::fs::File::create("lineitems_with_dictionary.parquet").expect("Failed to create file");
+    let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(writer_properties))
+        .expect("Failed to create writer");
+
+    let mut l_returnflag_builder = StringDictionaryBuilder::<datafusion::arrow::datatypes::Int32Type>::new();
+    let mut l_linestatus_builder = StringDictionaryBuilder::<datafusion::arrow::datatypes::Int32Type>::new();
+    let mut l_quantity = Vec::new();
+    let mut l_extendedprice = Vec::new();
+    let mut l_discount = Vec::new();
+    let mut l_tax = Vec::new();
+
+    let batch_size = 2048;
+
+    for row_result in result.iter_records().unwrap() {
+        let lineitem = row_result.unwrap();
+        l_returnflag_builder.append_value(&lineitem.l_returnflag);
+        l_linestatus_builder.append_value(&lineitem.l_linestatus);
+        l_quantity.push(lineitem.l_quantity);
+        l_extendedprice.push(lineitem.l_extendedprice);
+        l_discount.push(lineitem.l_discount);
+        l_tax.push(lineitem.l_tax);
+
+        if l_quantity.len() == batch_size {
+            write_parquet_batch_with_dictionary(
+                schema.clone(),
+                &mut writer,
+                &mut l_returnflag_builder,
+                &mut l_linestatus_builder,
+                l_quantity,
+                l_extendedprice,
+                l_discount,
+                l_tax,
+            );
+            l_quantity = Vec::new();
+            l_extendedprice = Vec::new();
+            l_discount = Vec::new();
+            l_tax = Vec::new();
+        }
+    }
+
+    write_parquet_batch_with_dictionary(
+        schema,
+        &mut writer,
+        &mut l_returnflag_builder,
+        &mut l_linestatus_builder,
+        l_quantity,
+        l_extendedprice,
+        l_discount,
+        l_tax,
+    );
+    writer.close().expect("Failed to close writer");
+    println!("Done writing parquet file");
+}
+
+fn write_parquet_batch_with_dictionary(
+    schema: Arc<Schema>,
+    writer: &mut ArrowWriter<std::fs::File>,
+    l_returnflag_builder: &mut StringDictionaryBuilder<Int32Type>,
+    l_linestatus_builder: &mut StringDictionaryBuilder<Int32Type>,
+    l_quantity: Vec<f64>,
+    l_extendedprice: Vec<f64>,
+    l_discount: Vec<f64>,
+    l_tax: Vec<f64>,
+) {
+    let l_returnflag = l_returnflag_builder.finish();
+    let l_linestatus = l_linestatus_builder.finish();
+
+    let batch = RecordBatch::try_new(
+        schema,
+        vec![
+            Arc::new(l_returnflag),
+            Arc::new(l_linestatus),
+            Arc::new(Float64Array::from(l_quantity)),
+            Arc::new(Float64Array::from(l_extendedprice)),
+            Arc::new(Float64Array::from(l_discount)),
+            Arc::new(Float64Array::from(l_tax)),
+        ],
+    )
+    .expect("Failed to create record batch");
+
+    writer.write(&batch).expect("Failed to write batch");
 }
