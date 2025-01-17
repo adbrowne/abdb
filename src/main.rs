@@ -404,7 +404,7 @@ fn main() {
             query_1_column();
         }
         Some(Commands::RunQuery1Parquet) => {
-            query_1_column_parquet();
+            tokio::runtime::Runtime::new().unwrap().block_on(query_1_column_parquet());
         }
         Some(Commands::RunQuery1) => {
             query_1();
@@ -642,82 +642,44 @@ fn write_parquet_batch(
     writer.write(&batch).expect("Failed to write batch");
 }
 
-fn query_1_column_parquet() {
-    // let file = std::fs::File::open("lineitems.parquet").expect("Failed to open file");
-    // let parquet_reader = datafusion::parquet::file::reader::SerializedFileReader::new(file)
-    //     .expect("Failed to create parquet reader");
+async fn query_1_column_parquet() {
+    let ctx = SessionContext::new();
     
-        let file = std::fs::File::open("lineitems_with_dictionary.parquet").expect("Failed to open file");
-        let builder = ParquetRecordBatchReaderBuilder::try_new(file).unwrap();
-        println!("Converted arrow schema is: {}", builder.schema());
-        
-        let mut arrow_reader = builder.build().unwrap();
+    // Register the parquet file as a table
+    ctx.register_parquet(
+        "lineitem",
+        "lineitems_with_dictionary.parquet",
+        ParquetReadOptions::default(),
+    )
+    .await
+    .expect("Failed to register parquet file");
 
-    let mut state: Vec<Option<QueryOneStateColumn>> = vec![None; 256 * 256];
+    // Execute TPC-H Query 1
+    let sql = "
+        SELECT 
+            l_returnflag,
+            l_linestatus,
+            COUNT(*) as count,
+            SUM(l_quantity) as sum_qty,
+            SUM(l_extendedprice) as sum_base_price,
+            SUM(l_extendedprice * (1 - l_discount)) as sum_disc_price,
+            SUM(l_extendedprice * (1 - l_discount) * (1 + l_tax)) as sum_charge,
+            AVG(l_quantity) as avg_qty,
+            AVG(l_extendedprice) as avg_price,
+            AVG(l_discount) as avg_disc
+        FROM lineitem
+        GROUP BY l_returnflag, l_linestatus
+        ORDER BY l_returnflag, l_linestatus
+    ";
 
-    for maybe_batch in arrow_reader {
-        let batch = maybe_batch.expect("Failed to read batch");
-        let l_quantity = batch
-            .column(2)
-            .as_any()
-            .downcast_ref::<Float64Array>()
-            .expect("Failed to downcast column");
-        let l_extendedprice = batch
-            .column(3)
-            .as_any()
-            .downcast_ref::<Float64Array>()
-            .expect("Failed to downcast column");
-        let l_discount = batch
-            .column(4)
-            .as_any()
-            .downcast_ref::<Float64Array>()
-            .expect("Failed to downcast column");
-        let l_tax = batch
-            .column(5)
-            .as_any()
-            .downcast_ref::<Float64Array>()
-            .expect("Failed to downcast column");
-        let l_returnflag = batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<DictionaryArray<Int32Type>>()
-            .expect("Failed to downcast column");
-        let l_returnflag_values = l_returnflag
-            .values()
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .expect("Failed to downcast dictionary values");
-        let l_linestatus = batch
-            .column(1)
-            .as_any()
-            .downcast_ref::<DictionaryArray<Int32Type>>()
-            .expect("Failed to downcast column");
-        let l_linestatus_values = l_linestatus
-            .values()
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .expect("Failed to downcast dictionary values");
-        for i in 0..batch.num_rows() {
-            let returnflag = l_returnflag_values.value(l_returnflag.keys().value(i) as usize).as_bytes()[0];
-            let linestatus = l_linestatus_values.value(l_linestatus.keys().value(i) as usize).as_bytes()[0];
-            let quantity = l_quantity.value(i);
-            let extendedprice = l_extendedprice.value(i);
-            let discount = l_discount.value(i);
-            let tax = l_tax.value(i);
+    let df = ctx.sql(sql).await.expect("Failed to execute query");
+    let results = df.collect().await.expect("Failed to collect results");
 
-            let array_location = get_state_index(returnflag, linestatus);
-            let current_state = state[array_location].get_or_insert_default();
-            current_state.sum_qty += (quantity * 100.0) as u64;
-            current_state.sum_base_price += (extendedprice * 100.0) as u64;
-            current_state.sum_discount += (discount * 100.0) as u64;
-            current_state.sum_tax += (tax * 100.0) as u64;
-            current_state.count += 1;
-        }
+    // Print results
+    for batch in results {
+        println!("{:?}", batch);
     }
-
-    print_state_column(state);
 }
-
 
 fn save_data_parquet_with_dictionary() {
     let conn = duckdb::Connection::open("db").unwrap();
