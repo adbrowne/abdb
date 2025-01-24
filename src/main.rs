@@ -1,21 +1,21 @@
 use std::{
     array::{self},
-    cmp::{max, min},
+    cmp::min,
     io::{BufRead, Read, Write},
-    result,
 };
 
 mod deltaread;
-use deltalake::{datafusion::catalog::TableProviderFactory, delta_datafusion::*};
-use datafusion::datasource::TableProvider;
 
-use deltalake::delta_datafusion::DeltaTableFactory;
-use datafusion::{prelude::*};
 use clap::{Parser, Subcommand};
-use datafusion::{arrow::array::{Float64Array, StringArray, DictionaryArray, StringDictionaryBuilder}, parquet::arrow::{self, arrow_reader::ParquetRecordBatchReaderBuilder}};
-use datafusion::arrow::datatypes::{DataType, Field, Schema, Int32Type};
+use datafusion::arrow::datatypes::{DataType, Field, Int32Type, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::ArrowWriter;
+use datafusion::prelude::*;
+use datafusion::parquet::basic::Compression;
+use datafusion::parquet::file::properties::WriterProperties;
+use datafusion::
+    arrow::array::{Float64Array, StringDictionaryBuilder}
+;
 
 use duckdb::{Connection, Row};
 use std::sync::Arc;
@@ -63,6 +63,7 @@ fn read_file() {
     }
 }
 
+#[allow(dead_code)]
 fn read_row_group<R: Read>(reader: &mut std::io::BufReader<R>) -> Vec<LineItem> {
     let item_count = read_u16(reader);
     let mut lineitems = Vec::new();
@@ -161,6 +162,7 @@ impl<W: Write> TrackedWriter<W> {
         }
     }
 
+    #[allow(dead_code)]
     fn bytes_written(&self) -> usize {
         self.bytes_written
     }
@@ -178,6 +180,7 @@ impl<W: Write> Write for TrackedWriter<W> {
     }
 }
 impl<W: Write> TrackedWriter<W> {
+    #[allow(dead_code)]
     fn into_inner(self) -> std::io::BufWriter<W> {
         self.writer
     }
@@ -410,10 +413,14 @@ fn main() {
             query_1_column();
         }
         Some(Commands::RunQuery1Parquet) => {
-            tokio::runtime::Runtime::new().unwrap().block_on(query_1_column_parquet());
+            tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(query_1_column_parquet());
         }
         Some(Commands::RunQuery1Delta) => {
-            tokio::runtime::Runtime::new().unwrap().block_on(deltaread::query_1_delta());
+            tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(deltaread::query_1_delta());
         }
         Some(Commands::RunQuery1) => {
             query_1();
@@ -430,6 +437,7 @@ fn main() {
 static MAX_ROW_GROUP_SIZE: usize = 8000;
 struct U16column {
     data: [u16; MAX_ROW_GROUP_SIZE],
+    #[allow(dead_code)]
     size: usize,
 }
 fn get_state_index(returnflag: u8, linestatus: u8) -> usize {
@@ -541,119 +549,10 @@ fn save_data_column() {
     }
 }
 
-use datafusion::parquet::basic::Compression;
-use datafusion::parquet::file::properties::WriterProperties;
-
-fn save_data_parquet() {
-    let conn = duckdb::Connection::open("db").unwrap();
-    let mut result = QueryResult::new(&conn).unwrap();
-
-    let schema = Arc::new(Schema::new(vec![
-        Field::new(
-            "l_returnflag",
-            DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8)),
-            false,
-        ),
-        Field::new(
-            "l_linestatus",
-            DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8)),
-            false,
-        ),
-        Field::new("l_quantity", DataType::Float64, false),
-        Field::new("l_extendedprice", DataType::Float64, false),
-        Field::new("l_discount", DataType::Float64, false),
-        Field::new("l_tax", DataType::Float64, false),
-    ]));
-
-    let writer_properties = WriterProperties::builder()
-        .set_compression(Compression::SNAPPY) // Enable Snappy compression
-        .set_dictionary_enabled(true) // Enable dictionary encoding
-        .build();
-
-    let file = std::fs::File::create("lineitems.parquet").expect("Failed to create file");
-    let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(writer_properties))
-        .expect("Failed to create writer");
-
-    let mut l_returnflag = Vec::new();
-    let mut l_linestatus = Vec::new();
-    let mut l_quantity = Vec::new();
-    let mut l_extendedprice = Vec::new();
-    let mut l_discount = Vec::new();
-    let mut l_tax = Vec::new();
-
-    let batch_size = 8000;
-
-    for row_result in result.iter_records().unwrap() {
-        let lineitem = row_result.unwrap();
-        l_returnflag.push(lineitem.l_returnflag);
-        l_linestatus.push(lineitem.l_linestatus);
-        l_quantity.push(lineitem.l_quantity);
-        l_extendedprice.push(lineitem.l_extendedprice);
-        l_discount.push(lineitem.l_discount);
-        l_tax.push(lineitem.l_tax);
-
-        if l_returnflag.len() == batch_size {
-            write_parquet_batch(
-                schema.clone(),
-                &mut writer,
-                l_returnflag,
-                l_linestatus,
-                l_quantity,
-                l_extendedprice,
-                l_discount,
-                l_tax,
-            );
-            l_returnflag = Vec::new();
-            l_linestatus = Vec::new();
-            l_quantity = Vec::new();
-            l_extendedprice = Vec::new();
-            l_discount = Vec::new();
-            l_tax = Vec::new();
-        }
-    }
-
-    write_parquet_batch(
-        schema,
-        &mut writer,
-        l_returnflag,
-        l_linestatus,
-        l_quantity,
-        l_extendedprice,
-        l_discount,
-        l_tax,
-    );
-    writer.close().expect("Failed to close writer");
-}
-
-fn write_parquet_batch(
-    schema: Arc<Schema>,
-    writer: &mut ArrowWriter<std::fs::File>,
-    l_returnflag: Vec<String>,
-    l_linestatus: Vec<String>,
-    l_quantity: Vec<f64>,
-    l_extendedprice: Vec<f64>,
-    l_discount: Vec<f64>,
-    l_tax: Vec<f64>,
-) {
-    let batch = RecordBatch::try_new(
-        schema,
-        vec![
-            Arc::new(StringArray::from(l_returnflag)),
-            Arc::new(StringArray::from(l_linestatus)),
-            Arc::new(Float64Array::from(l_quantity)),
-            Arc::new(Float64Array::from(l_extendedprice)),
-            Arc::new(Float64Array::from(l_discount)),
-            Arc::new(Float64Array::from(l_tax)),
-        ],
-    )
-    .expect("Failed to create record batch");
-
-    writer.write(&batch).expect("Failed to write batch");
-}
 
 async fn query_1_column_parquet() {
     let ctx = SessionContext::new();
-    
+
     // Register the parquet file as a table
     ctx.register_parquet(
         "lineitem",
@@ -716,12 +615,15 @@ fn save_data_parquet_with_dictionary() {
         .set_dictionary_enabled(true) // Enable dictionary encoding
         .build();
 
-    let file = std::fs::File::create("lineitems_with_dictionary.parquet").expect("Failed to create file");
+    let file =
+        std::fs::File::create("lineitems_with_dictionary.parquet").expect("Failed to create file");
     let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(writer_properties))
         .expect("Failed to create writer");
 
-    let mut l_returnflag_builder = StringDictionaryBuilder::<datafusion::arrow::datatypes::Int32Type>::new();
-    let mut l_linestatus_builder = StringDictionaryBuilder::<datafusion::arrow::datatypes::Int32Type>::new();
+    let mut l_returnflag_builder =
+        StringDictionaryBuilder::<datafusion::arrow::datatypes::Int32Type>::new();
+    let mut l_linestatus_builder =
+        StringDictionaryBuilder::<datafusion::arrow::datatypes::Int32Type>::new();
     let mut l_quantity = Vec::new();
     let mut l_extendedprice = Vec::new();
     let mut l_discount = Vec::new();
