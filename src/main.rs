@@ -5,7 +5,12 @@ use std::{
     result,
 };
 
-use datafusion::prelude::*;
+mod deltaread;
+use deltalake::{datafusion::catalog::TableProviderFactory, delta_datafusion::*};
+use datafusion::datasource::TableProvider;
+
+use deltalake::delta_datafusion::DeltaTableFactory;
+use datafusion::{prelude::*};
 use clap::{Parser, Subcommand};
 use datafusion::{arrow::array::{Float64Array, StringArray, DictionaryArray, StringDictionaryBuilder}, parquet::arrow::{self, arrow_reader::ParquetRecordBatchReaderBuilder}};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, Int32Type};
@@ -30,6 +35,7 @@ enum Commands {
     RunQuery1,
     RunQuery1Column,
     RunQuery1Parquet,
+    RunQuery1Delta,
     ReadFile,
 }
 
@@ -405,6 +411,9 @@ fn main() {
         }
         Some(Commands::RunQuery1Parquet) => {
             tokio::runtime::Runtime::new().unwrap().block_on(query_1_column_parquet());
+        }
+        Some(Commands::RunQuery1Delta) => {
+            tokio::runtime::Runtime::new().unwrap().block_on(deltaread::query_1_delta());
         }
         Some(Commands::RunQuery1) => {
             query_1();
