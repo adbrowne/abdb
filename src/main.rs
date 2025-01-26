@@ -7,7 +7,7 @@ use std::{
 mod deltaread;
 
 use clap::{Parser, Subcommand};
-use datafusion::arrow::datatypes::{DataType, Field, Int32Type, Schema};
+use datafusion::{arrow::datatypes::{DataType, Field, Int32Type, Schema}, parquet::schema::types::ColumnPath};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::prelude::*;
@@ -187,7 +187,7 @@ impl<W: Write> TrackedWriter<W> {
 }
 fn write_row_group<W: Write>(lineitems: &[LineItem], writer: &mut TrackedWriter<W>) {
     let item_count = (lineitems.len() as u16).to_le_bytes();
-    writer.write(&item_count).expect("Failed to write");
+    writer.write_all(&item_count).expect("Failed to write");
     write_string_column(lineitems.iter().map(|x| &x.l_linestatus), writer);
     write_string_column(lineitems.iter().map(|x| &x.l_returnflag), writer);
     write_f64_column(lineitems.iter().map(|x| x.l_quantity), writer);
@@ -420,7 +420,7 @@ fn main() {
         Some(Commands::RunQuery1Delta) => {
             tokio::runtime::Runtime::new()
                 .unwrap()
-                .block_on(deltaread::query_1_delta());
+                .block_on(deltaread::query_1_delta(SQL));
         }
         Some(Commands::RunQuery1) => {
             query_1();
@@ -550,20 +550,7 @@ fn save_data_column() {
 }
 
 
-async fn query_1_column_parquet() {
-    let ctx = SessionContext::new();
-
-    // Register the parquet file as a table
-    ctx.register_parquet(
-        "lineitem",
-        "lineitems_with_dictionary.parquet",
-        ParquetReadOptions::default(),
-    )
-    .await
-    .expect("Failed to register parquet file");
-
-    // Execute TPC-H Query 1
-    let sql = "
+const SQL : &str = "
         SELECT 
             l_returnflag,
             l_linestatus,
@@ -577,10 +564,22 @@ async fn query_1_column_parquet() {
             AVG(l_discount) as avg_disc
         FROM lineitem
         GROUP BY l_returnflag, l_linestatus
-        ORDER BY l_returnflag, l_linestatus
-    ";
+        ORDER BY l_returnflag, l_linestatus";
+    
+async fn query_1_column_parquet() {
+    let ctx = SessionContext::new();
 
-    let df = ctx.sql(sql).await.expect("Failed to execute query");
+    // Register the parquet file as a table
+    ctx.register_parquet(
+        "lineitem",
+        //"lineitems_with_dictionary.parquet",
+        "lineitems_with_dictionary_orig.parquet",
+        ParquetReadOptions::default(),
+    )
+    .await
+    .expect("Failed to register parquet file");
+
+    let df = ctx.sql(SQL).await.expect("Failed to execute query");
     let results = df.collect().await.expect("Failed to collect results");
 
     // Print results
@@ -610,9 +609,13 @@ fn save_data_parquet_with_dictionary() {
         Field::new("l_tax", DataType::Float64, false),
     ]));
 
+    let returnflag_col = ColumnPath::new(vec![String::from("l_returnflag")]);
+    let linestatus_col = ColumnPath::new(vec![String::from("l_linestatus")]);
     let writer_properties = WriterProperties::builder()
-        .set_compression(Compression::SNAPPY) // Enable Snappy compression
-        .set_dictionary_enabled(true) // Enable dictionary encoding
+        .set_compression(Compression::SNAPPY)
+        .set_dictionary_enabled(true)
+        .set_column_dictionary_enabled(returnflag_col, true)
+        .set_column_dictionary_enabled(linestatus_col, true)
         .build();
 
     let file =
