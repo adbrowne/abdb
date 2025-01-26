@@ -91,8 +91,7 @@ fn read_row_group<R: Read>(reader: &mut std::io::BufReader<R>) -> Vec<LineItem> 
 fn read_u16<R: Read>(reader: &mut std::io::BufReader<R>) -> u16 {
     let mut buffer = [0u8; 2];
     reader.read_exact(&mut buffer).expect("Failed to read");
-    let item_count = u16::from_le_bytes(buffer);
-    item_count
+    u16::from_le_bytes(buffer)
 }
 
 fn read_u16_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16) -> U16column {
@@ -446,7 +445,7 @@ fn get_state_index(returnflag: u8, linestatus: u8) -> usize {
 
 fn update_state_from_row_group<R: Read>(
     reader: &mut std::io::BufReader<R>,
-    state: &mut Vec<Option<QueryOneStateColumn>>,
+    state: &[Option<QueryOneStateColumn>],
 ) -> () {
     let item_count = read_u16(reader);
     let mut linestatus = read_u8_string_column(reader, item_count);
