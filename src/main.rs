@@ -419,7 +419,7 @@ fn main() {
         Some(Commands::RunQuery1Delta) => {
             tokio::runtime::Runtime::new()
                 .unwrap()
-                .block_on(deltaread::query_1_delta(SQL));
+                .block_on(deltaread::query_1_delta(QUERY1_SQL));
         }
         Some(Commands::RunQuery1) => {
             query_1();
@@ -445,8 +445,8 @@ fn get_state_index(returnflag: u8, linestatus: u8) -> usize {
 
 fn update_state_from_row_group<R: Read>(
     reader: &mut std::io::BufReader<R>,
-    state: &[Option<QueryOneStateColumn>],
-) -> () {
+    state: &mut [Option<QueryOneStateColumn>],
+){
     let item_count = read_u16(reader);
     let mut linestatus = read_u8_string_column(reader, item_count);
     let mut returnflag = read_u8_string_column(reader, item_count);
@@ -466,20 +466,20 @@ fn update_state_from_row_group<R: Read>(
         let current_state =
             state[get_state_index(last_returnflag.0, last_linestatus.0)].get_or_insert_default();
 
-        current_state.sum_qty += quantity.data[index as usize..(index + run_length) as usize]
+        current_state.sum_qty += quantity.data[index..(index + run_length) as usize]
             .iter()
             .map(|x| *x as u64)
             .sum::<u64>();
         current_state.sum_base_price += extendedprice.data
-            [index as usize..(index + run_length) as usize]
+            [index..(index + run_length) as usize]
             .iter()
             .map(|x| *x as u64)
             .sum::<u64>();
-        current_state.sum_discount += discount.data[index as usize..(index + run_length) as usize]
+        current_state.sum_discount += discount.data[index..(index + run_length) as usize]
             .iter()
             .map(|x| *x as u64)
             .sum::<u64>();
-        current_state.sum_tax += tax.data[index as usize..(index + run_length) as usize]
+        current_state.sum_tax += tax.data[index..(index + run_length) as usize]
             .iter()
             .map(|x| *x as u64)
             .sum::<u64>();
@@ -549,7 +549,7 @@ fn save_data_column() {
 }
 
 
-const SQL : &str = "
+const QUERY1_SQL : &str = "
         SELECT 
             l_returnflag,
             l_linestatus,
@@ -578,7 +578,7 @@ async fn query_1_column_parquet() {
     .await
     .expect("Failed to register parquet file");
 
-    let df = ctx.sql(SQL).await.expect("Failed to execute query");
+    let df = ctx.sql(QUERY1_SQL).await.expect("Failed to execute query");
     let results = df.collect().await.expect("Failed to collect results");
 
     // Print results
