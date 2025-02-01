@@ -95,14 +95,14 @@ fn read_u16<R: Read>(reader: &mut std::io::BufReader<R>) -> u16 {
 }
 
 fn read_u16_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16) -> U16column {
-    let mut data = [0u16; MAX_ROW_GROUP_SIZE];
+    let mut column = U16column::new();
+    let mut buffer = vec![0u8; item_count as usize * 2]; // 2 bytes per u16
     reader
-        .read_exact(bytemuck::cast_slice_mut(&mut data[0..item_count as usize]))
+        .read_exact(&mut buffer)
         .expect("Failed to read");
-    U16column {
-        data,
-        size: item_count as usize,
-    }
+    column.data.extend_from_slice(bytemuck::cast_slice(&buffer));
+    
+    column
 }
 
 fn read_f64_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16) -> Vec<f64> {
@@ -439,10 +439,20 @@ fn main() {
 
 static MAX_ROW_GROUP_SIZE: usize = 100000;
 struct U16column {
-    data: [u16; MAX_ROW_GROUP_SIZE],
+    data: Vec<u16>,
     #[allow(dead_code)]
     size: usize,
 }
+
+impl U16column {
+    fn new() -> U16column {
+        U16column {
+            data: Vec::with_capacity(MAX_ROW_GROUP_SIZE),
+            size: 0,
+        }
+    }
+}
+
 fn get_state_index(returnflag: u8, linestatus: u8) -> usize {
     (returnflag as usize) * 256 + (linestatus as usize)
 }
