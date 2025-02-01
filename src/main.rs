@@ -116,23 +116,24 @@ fn read_f64_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16)
 fn read_u8_string_column<R: Read>(
     reader: &mut std::io::BufReader<R>,
     item_count: u16,
-) -> [(u8, u16); MAX_ROW_GROUP_SIZE] {
-    let mut column = [(0u8, 0u16); MAX_ROW_GROUP_SIZE];
-    let mut i = 0;
-    let mut remaining = item_count as i16;
+    mut column: Vec<(u8, u32)>,
+) -> Vec<(u8, u32)> {
+    unsafe {
+        column.set_len(0);
+    }
+    let mut remaining = item_count as i32; // Correctly set remaining to item_count
     while remaining > 0 {
         let (value, count) = read_u8_string_entry(reader);
-        column[i] = (value, count);
-        remaining -= count as i16;
-        i += 1;
+        column.push((value, count));
+        remaining -= count as i32;
     }
     column
 }
 
-fn read_u8_string_entry<R: Read>(reader: &mut std::io::BufReader<R>) -> (u8, u16) {
-    let mut buffer = [0u8; 3];
+fn read_u8_string_entry<R: Read>(reader: &mut std::io::BufReader<R>) -> (u8, u32) {
+    let mut buffer = [0u8; 5];
     reader.read_exact(&mut buffer).expect("Failed to read");
-    let count = u16::from_le_bytes([buffer[1], buffer[2]]);
+    let count = u32::from_le_bytes([buffer[1], buffer[2], buffer[3], buffer[4]]);
     (buffer[0], count)
 }
 
@@ -140,8 +141,9 @@ fn read_string_column<R: Read>(
     reader: &mut std::io::BufReader<R>,
     item_count: u16,
 ) -> Vec<std::string::String> {
-    let mut result = Vec::new();
-    for (u8_value, repeat_count) in read_u8_string_column(reader, item_count).iter() {
+    let mut result = Vec::with_capacity(MAX_ROW_GROUP_SIZE);
+    let column = Vec::with_capacity(item_count as usize);
+    for (u8_value, repeat_count) in read_u8_string_column(reader, item_count, column).iter() {
         let value = String::from_utf8(vec![*u8_value]).expect("Failed to convert to string");
         let r = vec![value; *repeat_count as usize];
         result.extend(r);
@@ -209,8 +211,10 @@ where
         writer
             .write_all(&[
                 value.as_bytes()[0],
-                (count as u16).to_le_bytes()[0],
-                (count as u16).to_le_bytes()[1],
+                (count as u32).to_le_bytes()[0],
+                (count as u32).to_le_bytes()[1],
+                (count as u32).to_le_bytes()[2],
+                (count as u32).to_le_bytes()[3],
             ])
             .expect("Failed to write");
     }
@@ -433,7 +437,7 @@ fn main() {
     //query_1();
 }
 
-static MAX_ROW_GROUP_SIZE: usize = 8000;
+static MAX_ROW_GROUP_SIZE: usize = 100000;
 struct U16column {
     data: [u16; MAX_ROW_GROUP_SIZE],
     #[allow(dead_code)]
@@ -448,8 +452,10 @@ fn update_state_from_row_group<R: Read>(
     state: &mut [Option<QueryOneStateColumn>],
 ){
     let item_count = read_u16(reader);
-    let mut linestatus = read_u8_string_column(reader, item_count);
-    let mut returnflag = read_u8_string_column(reader, item_count);
+    let linestatus_data = Vec::with_capacity(item_count as usize);
+    let returnflag_data = Vec::with_capacity(item_count as usize);
+    let mut linestatus = read_u8_string_column(reader, item_count, linestatus_data);
+    let mut returnflag = read_u8_string_column(reader, item_count, returnflag_data);
     let quantity = read_u16_column(reader, item_count);
     let discount = read_u16_column(reader, item_count);
     let tax = read_u16_column(reader, item_count);
@@ -484,12 +490,12 @@ fn update_state_from_row_group<R: Read>(
             .map(|x| *x as u64)
             .sum::<u64>();
 
-        returnflag[last_returnflag_index].1 -= run_length as u16;
-        linestatus[last_linestatus_index].1 -= run_length as u16;
-        if returnflag[last_returnflag_index].1 == 0 as u16 {
+        returnflag[last_returnflag_index].1 -= run_length as u32;
+        linestatus[last_linestatus_index].1 -= run_length as u32;
+        if returnflag[last_returnflag_index].1 == 0 as u32 {
             last_returnflag_index += 1;
         }
-        if linestatus[last_linestatus_index].1 == 0 as u16 {
+        if linestatus[last_linestatus_index].1 == 0 as u32 {
             last_linestatus_index += 1;
         }
         index += run_length;
