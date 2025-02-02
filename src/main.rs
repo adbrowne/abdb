@@ -20,6 +20,7 @@ use datafusion::
 use duckdb::{Connection, Row};
 use std::sync::Arc;
 mod tests;
+pub mod handroll;
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 struct Cli {
@@ -413,7 +414,8 @@ fn main() {
             save_data_parquet_with_dictionary();
         }
         Some(Commands::RunQuery1Column {}) => {
-            query_1_column();
+            //query_1_column();
+            handroll::handroll::query_1_column();
         }
         Some(Commands::RunQuery1Parquet) => {
             tokio::runtime::Runtime::new()
