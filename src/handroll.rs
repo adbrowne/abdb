@@ -20,7 +20,7 @@ pub mod handroll {
         sum_tax: u64,
     }
 
-    pub(crate) fn query_1_column() {
+    pub fn query_1_column() {
         let file = std::fs::File::open("lineitems_column.bin").expect("Failed to open file");
         let mut reader = std::io::BufReader::new(file);
         let mut state: Vec<Option<QueryOneStateColumn>> = vec![None; 256 * 256];
