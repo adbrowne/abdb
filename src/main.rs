@@ -18,6 +18,7 @@ use datafusion::
 ;
 
 use duckdb::{Connection, Row};
+use handroll::handroll::*;
 use std::sync::Arc;
 mod tests;
 pub mod handroll;
@@ -151,88 +152,6 @@ fn read_string_column<R: Read>(
     }
     result
 }
-struct TrackedWriter<W: Write> {
-    writer: std::io::BufWriter<W>,
-    bytes_written: usize,
-}
-
-impl<W: Write> TrackedWriter<W> {
-    fn new(writer: W) -> Self {
-        TrackedWriter {
-            writer: std::io::BufWriter::new(writer),
-            bytes_written: 0,
-        }
-    }
-
-    #[allow(dead_code)]
-    fn bytes_written(&self) -> usize {
-        self.bytes_written
-    }
-}
-
-impl<W: Write> Write for TrackedWriter<W> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let bytes = self.writer.write(buf)?;
-        self.bytes_written += bytes;
-        Ok(bytes)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.writer.flush()
-    }
-}
-impl<W: Write> TrackedWriter<W> {
-    #[allow(dead_code)]
-    fn into_inner(self) -> std::io::BufWriter<W> {
-        self.writer
-    }
-}
-fn write_row_group<W: Write>(lineitems: &[LineItem], writer: &mut TrackedWriter<W>) {
-    let item_count = (lineitems.len() as u16).to_le_bytes();
-    writer.write_all(&item_count).expect("Failed to write");
-    write_string_column(lineitems.iter().map(|x| &x.l_linestatus), writer);
-    write_string_column(lineitems.iter().map(|x| &x.l_returnflag), writer);
-    write_f64_column(lineitems.iter().map(|x| x.l_quantity), writer);
-    write_f64_column(lineitems.iter().map(|x| x.l_discount), writer);
-    write_f64_column(lineitems.iter().map(|x| x.l_tax), writer);
-    write_f64_column(lineitems.iter().map(|x| x.l_extendedprice), writer);
-}
-
-fn write_string_column<'a, I, W: Write>(column: I, writer: &mut TrackedWriter<W>)
-where
-    I: Iterator<Item = &'a String>,
-{
-    let mut iter = column.peekable();
-    while let Some(value) = iter.next() {
-        let mut count = 1;
-        while iter.peek() == Some(&value) {
-            iter.next();
-            count += 1;
-        }
-        writer
-            .write_all(&[
-                value.as_bytes()[0],
-                (count as u32).to_le_bytes()[0],
-                (count as u32).to_le_bytes()[1],
-                (count as u32).to_le_bytes()[2],
-                (count as u32).to_le_bytes()[3],
-            ])
-            .expect("Failed to write");
-    }
-}
-
-fn write_f64_column<I, W: Write>(column: I, writer: &mut TrackedWriter<W>)
-where
-    I: Iterator<Item = f64>,
-{
-    let mut buffer = [0u8; 2];
-    for value in column {
-        let compressed = compress_f64(value);
-        buffer.copy_from_slice(&compressed.to_le_bytes());
-        writer.write_all(&buffer).expect("Failed to write");
-    }
-}
-
 fn query_1() {
     let file = std::fs::File::open("lineitems.bin").expect("Failed to open file");
 
@@ -314,25 +233,7 @@ fn print_state_column(state: Vec<Option<QueryOneStateColumn>>) {
     }
 }
 
-fn compress_f64(f: f64) -> u16 {
-    let f = f * 100.0;
-    let f = f.round();
-    f as u16
-}
 
-fn decompress_f64(f: u16) -> f64 {
-    f as f64 / 100.0
-}
-
-#[derive(Debug, PartialEq, Clone)]
-struct LineItem {
-    l_returnflag: String,
-    l_linestatus: String,
-    l_quantity: f64,
-    l_extendedprice: f64,
-    l_discount: f64,
-    l_tax: f64,
-}
 
 impl<'a> From<&Row<'a>> for LineItem {
     fn from(row: &Row) -> Self {

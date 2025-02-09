@@ -1,4 +1,4 @@
-use abdb::handroll;
+use abdb::handroll::handroll::query_1_column;
 fn main(){
-    handroll::handroll::query_1_column();
+    query_1_column();
 }
