@@ -6,7 +6,8 @@ use std::{
 
 mod deltaread;
 
-use clap::{Parser, Subcommand};
+use abdb::*;
+use clap::{command, Parser, Subcommand};
 use datafusion::{arrow::datatypes::{DataType, Field, Int32Type, Schema}, parquet::schema::types::ColumnPath};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::ArrowWriter;
@@ -18,10 +19,8 @@ use datafusion::
 ;
 
 use duckdb::{Connection, Row};
-use handroll::handroll::*;
 use std::sync::Arc;
 mod tests;
-pub mod handroll;
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 struct Cli {
@@ -233,18 +232,14 @@ fn print_state_column(state: Vec<Option<QueryOneStateColumn>>) {
     }
 }
 
-
-
-impl<'a> From<&Row<'a>> for LineItem {
-    fn from(row: &Row) -> Self {
-        LineItem {
-            l_returnflag: row.get(0).unwrap(),
-            l_linestatus: row.get(1).unwrap(),
-            l_quantity: row.get(2).unwrap(),
-            l_extendedprice: row.get(3).unwrap(),
-            l_discount: row.get(4).unwrap(),
-            l_tax: row.get(5).unwrap(),
-        }
+fn lineitem_from_row(row: &Row) -> LineItem {
+    LineItem {
+        l_returnflag: row.get(0).unwrap(),
+        l_linestatus: row.get(1).unwrap(),
+        l_quantity: row.get(2).unwrap(),
+        l_extendedprice: row.get(3).unwrap(),
+        l_discount: row.get(4).unwrap(),
+        l_tax: row.get(5).unwrap(),
     }
 }
 
@@ -261,7 +256,7 @@ impl<'a> QueryResult<'a> {
     fn iter_records(
         &'a mut self,
     ) -> Result<impl Iterator<Item = Result<LineItem, duckdb::Error>> + 'a, duckdb::Error> {
-        Ok(self.stmt.query_map([], |row| Ok(LineItem::from(row)))?)
+        Ok(self.stmt.query_map([], |row| Ok(lineitem_from_row(row)))?)
     }
 }
 
@@ -316,7 +311,7 @@ fn main() {
         }
         Some(Commands::RunQuery1Column {}) => {
             //query_1_column();
-            handroll::handroll::query_1_column();
+            query_1_column();
         }
         Some(Commands::RunQuery1Parquet) => {
             tokio::runtime::Runtime::new()
