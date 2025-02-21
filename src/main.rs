@@ -7,6 +7,7 @@ use std::{
 mod deltaread;
 
 use abdb::*;
+use abdb::string_column::{read_u8_string_column, read_string_column};
 use clap::{command, Parser, Subcommand};
 use datafusion::{arrow::datatypes::{DataType, Field, Int32Type, Schema}, parquet::schema::types::ColumnPath};
 use datafusion::arrow::record_batch::RecordBatch;
@@ -95,62 +96,6 @@ fn read_u16<R: Read>(reader: &mut std::io::BufReader<R>) -> u16 {
     u16::from_le_bytes(buffer)
 }
 
-fn read_u16_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16) -> U16column {
-    let mut column = U16column::new();
-    let mut buffer = vec![0u8; item_count as usize * 2]; // 2 bytes per u16
-    reader
-        .read_exact(&mut buffer)
-        .expect("Failed to read");
-    column.data.extend_from_slice(bytemuck::cast_slice(&buffer));
-    
-    column
-}
-
-fn read_f64_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16) -> Vec<f64> {
-    read_u16_column(reader, item_count)
-        .data
-        .iter()
-        .map(|x| decompress_f64(*x))
-        .collect()
-}
-
-fn read_u8_string_column<R: Read>(
-    reader: &mut std::io::BufReader<R>,
-    item_count: u16,
-    mut column: Vec<(u8, u32)>,
-) -> Vec<(u8, u32)> {
-    unsafe {
-        column.set_len(0);
-    }
-    let mut remaining = item_count as i32; // Correctly set remaining to item_count
-    while remaining > 0 {
-        let (value, count) = read_u8_string_entry(reader);
-        column.push((value, count));
-        remaining -= count as i32;
-    }
-    column
-}
-
-fn read_u8_string_entry<R: Read>(reader: &mut std::io::BufReader<R>) -> (u8, u32) {
-    let mut buffer = [0u8; 5];
-    reader.read_exact(&mut buffer).expect("Failed to read");
-    let count = u32::from_le_bytes([buffer[1], buffer[2], buffer[3], buffer[4]]);
-    (buffer[0], count)
-}
-
-fn read_string_column<R: Read>(
-    reader: &mut std::io::BufReader<R>,
-    item_count: u16,
-) -> Vec<std::string::String> {
-    let mut result = Vec::with_capacity(MAX_ROW_GROUP_SIZE);
-    let column = Vec::with_capacity(item_count as usize);
-    for (u8_value, repeat_count) in read_u8_string_column(reader, item_count, column).iter() {
-        let value = String::from_utf8(vec![*u8_value]).expect("Failed to convert to string");
-        let r = vec![value; *repeat_count as usize];
-        result.extend(r);
-    }
-    result
-}
 fn query_1() {
     let file = std::fs::File::open("lineitems.bin").expect("Failed to open file");
 
@@ -335,22 +280,6 @@ fn main() {
     //query_1();
 }
 
-static MAX_ROW_GROUP_SIZE: usize = 100000;
-struct U16column {
-    data: Vec<u16>,
-    #[allow(dead_code)]
-    size: usize,
-}
-
-impl U16column {
-    fn new() -> U16column {
-        U16column {
-            data: Vec::with_capacity(MAX_ROW_GROUP_SIZE),
-            size: 0,
-        }
-    }
-}
-
 fn get_state_index(returnflag: u8, linestatus: u8) -> usize {
     (returnflag as usize) * 256 + (linestatus as usize)
 }
@@ -360,10 +289,8 @@ fn update_state_from_row_group<R: Read>(
     state: &mut [Option<QueryOneStateColumn>],
 ){
     let item_count = read_u16(reader);
-    let linestatus_data = Vec::with_capacity(item_count as usize);
-    let returnflag_data = Vec::with_capacity(item_count as usize);
-    let mut linestatus = read_u8_string_column(reader, item_count, linestatus_data);
-    let mut returnflag = read_u8_string_column(reader, item_count, returnflag_data);
+    let mut linestatus = read_u8_string_column(reader, item_count);
+    let mut returnflag = read_u8_string_column(reader, item_count);
     let quantity = read_u16_column(reader, item_count);
     let discount = read_u16_column(reader, item_count);
     let tax = read_u16_column(reader, item_count);

@@ -2,8 +2,6 @@ use std::io::Read;
 use std::io::Write;
 
 use crate::{TrackedWriter, MAX_ROW_GROUP_SIZE};
-use std::io::BufReader;
-use std::io::Cursor;
 
 fn read_u8_string_entry<R: Read>(reader: &mut std::io::BufReader<R>) -> (u8, u32) {
     let mut buffer = [0u8; 5];
@@ -12,7 +10,20 @@ fn read_u8_string_entry<R: Read>(reader: &mut std::io::BufReader<R>) -> (u8, u32
     (buffer[0], count)
 }
 
-fn read_u8_string_column<R: Read>(
+pub fn read_string_column<R: Read>(
+    reader: &mut std::io::BufReader<R>,
+    item_count: u16,
+) -> Vec<std::string::String> {
+    let mut result = Vec::with_capacity(MAX_ROW_GROUP_SIZE);
+    for (u8_value, repeat_count) in read_u8_string_column(reader, item_count).iter() {
+        let value = String::from_utf8(vec![*u8_value]).expect("Failed to convert to string");
+        let r = vec![value; *repeat_count as usize];
+        result.extend(r);
+    }
+    result
+}
+
+pub fn read_u8_string_column<R: Read>(
     reader: &mut std::io::BufReader<R>,
     item_count: u16,
 ) -> [(u8, u32); MAX_ROW_GROUP_SIZE] {
@@ -28,7 +39,7 @@ fn read_u8_string_column<R: Read>(
     column
 }
 
-struct StringColumnReader {
+pub struct StringColumnReader {
     data: [(u8, u32); MAX_ROW_GROUP_SIZE],
     item_count: u16,
     item_index: u16,
@@ -36,7 +47,7 @@ struct StringColumnReader {
 }
 
 impl StringColumnReader {
-    fn new<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16)  -> Self {
+    pub fn new<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16)  -> Self {
         StringColumnReader { data: read_u8_string_column(reader, item_count), item_count, item_index: 0, repeat_index: 0 }
     }
 }
@@ -88,6 +99,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::io::{BufReader, Cursor};
+
     use super::*;
 
     #[test]

@@ -1,10 +1,10 @@
-mod string_column;
+pub mod string_column;
 use std::{
     cmp::min,
     io::{BufRead, Read, Write},
 };
 static MAX_ROW_GROUP_SIZE: usize = 8000;
-
+use string_column::{read_u8_string_column, write_string_column};
 #[derive(Debug, Default, PartialEq, Clone)]
 struct QueryOneState {
     count: u64,
@@ -79,12 +79,12 @@ fn update_state_from_row_group<R: Read>(
             .map(|x| *x as u64)
             .sum::<u64>();
 
-        returnflag[last_returnflag_index].1 -= run_length as u16;
-        linestatus[last_linestatus_index].1 -= run_length as u16;
-        if returnflag[last_returnflag_index].1 == 0 as u16 {
+        returnflag[last_returnflag_index].1 -= run_length as u32;
+        linestatus[last_linestatus_index].1 -= run_length as u32;
+        if returnflag[last_returnflag_index].1 == 0 {
             last_returnflag_index += 1;
         }
-        if linestatus[last_linestatus_index].1 == 0 as u16 {
+        if linestatus[last_linestatus_index].1 == 0 as u32 {
             last_linestatus_index += 1;
         }
         index += run_length;
@@ -120,7 +120,7 @@ fn read_u16<R: Read>(reader: &mut std::io::BufReader<R>) -> u16 {
     item_count
 }
 
-fn read_u16_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16) -> U16column {
+pub fn read_u16_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16) -> U16column {
     let mut data = [0u16; MAX_ROW_GROUP_SIZE];
     reader
         .read_exact(bytemuck::cast_slice_mut(&mut data[0..item_count as usize]))
@@ -131,7 +131,7 @@ fn read_u16_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16)
     }
 }
 
-fn read_f64_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16) -> Vec<f64> {
+pub fn read_f64_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16) -> Vec<f64> {
     read_u16_column(reader, item_count)
         .data
         .iter()
@@ -139,26 +139,15 @@ fn read_f64_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16)
         .collect()
 }
 
-fn read_string_column<R: Read>(
-    reader: &mut std::io::BufReader<R>,
-    item_count: u16,
-) -> Vec<std::string::String> {
-    let mut result = Vec::new();
-    for (u8_value, repeat_count) in read_u8_string_column(reader, item_count).iter() {
-        let value = String::from_utf8(vec![*u8_value]).expect("Failed to convert to string");
-        let r = vec![value; *repeat_count as usize];
-        result.extend(r);
-    }
-    result
-}
-
 fn get_state_index(returnflag: u8, linestatus: u8) -> usize {
     (returnflag as usize) * 256 + (linestatus as usize)
 }
-struct U16column {
-    data: [u16; MAX_ROW_GROUP_SIZE],
+pub struct U16column {
+    pub data: [u16; MAX_ROW_GROUP_SIZE],
+    #[allow(dead_code)]
     size: usize,
 }
+
 pub fn decompress_f64(f: u16) -> f64 {
     f as f64 / 100.0
 }
@@ -235,51 +224,5 @@ impl<W: Write> TrackedWriter<W> {
     #[allow(dead_code)]
     pub fn into_inner(self) -> std::io::BufWriter<W> {
         self.writer
-    }
-}
-
-fn read_u8_string_entry<R: Read>(reader: &mut std::io::BufReader<R>) -> (u8, u16) {
-    let mut buffer = [0u8; 3];
-    reader.read_exact(&mut buffer).expect("Failed to read");
-    let count = u16::from_le_bytes([buffer[1], buffer[2]]);
-    (buffer[0], count)
-}
-
-pub fn read_u8_string_column<R: Read>(
-    reader: &mut std::io::BufReader<R>,
-    item_count: u16,
-) -> [(u8, u16); MAX_ROW_GROUP_SIZE] {
-    let mut column = [(0u8, 0u16); MAX_ROW_GROUP_SIZE];
-    let mut i = 0;
-    let mut remaining = item_count as i16;
-    while remaining > 0 {
-        let (value, count) = read_u8_string_entry(reader);
-        column[i] = (value, count);
-        remaining -= count as i16;
-        i += 1;
-    }
-    column
-}
-
-pub fn write_string_column<'a, I, W: Write>(column: I, writer: &mut TrackedWriter<W>)
-where
-    I: Iterator<Item = &'a String>,
-{
-    let mut iter = column.peekable();
-    while let Some(value) = iter.next() {
-        let mut count = 1;
-        while iter.peek() == Some(&value) {
-            iter.next();
-            count += 1;
-        }
-        writer
-            .write_all(&[
-                value.as_bytes()[0],
-                (count as u32).to_le_bytes()[0],
-                (count as u32).to_le_bytes()[1],
-                (count as u32).to_le_bytes()[2],
-                (count as u32).to_le_bytes()[3],
-            ])
-            .expect("Failed to write");
     }
 }
