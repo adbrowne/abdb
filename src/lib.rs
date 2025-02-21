@@ -1,3 +1,4 @@
+mod string_column;
 use std::{
     cmp::min,
     io::{BufRead, Read, Write},
@@ -138,29 +139,6 @@ fn read_f64_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16)
         .collect()
 }
 
-fn read_u8_string_column<R: Read>(
-    reader: &mut std::io::BufReader<R>,
-    item_count: u16,
-) -> [(u8, u16); MAX_ROW_GROUP_SIZE] {
-    let mut column = [(0u8, 0u16); MAX_ROW_GROUP_SIZE];
-    let mut i = 0;
-    let mut remaining = item_count as i16;
-    while remaining > 0 {
-        let (value, count) = read_u8_string_entry(reader);
-        column[i] = (value, count);
-        remaining -= count as i16;
-        i += 1;
-    }
-    column
-}
-
-fn read_u8_string_entry<R: Read>(reader: &mut std::io::BufReader<R>) -> (u8, u16) {
-    let mut buffer = [0u8; 3];
-    reader.read_exact(&mut buffer).expect("Failed to read");
-    let count = u16::from_le_bytes([buffer[1], buffer[2]]);
-    (buffer[0], count)
-}
-
 fn read_string_column<R: Read>(
     reader: &mut std::io::BufReader<R>,
     item_count: u16,
@@ -173,6 +151,7 @@ fn read_string_column<R: Read>(
     }
     result
 }
+
 fn get_state_index(returnflag: u8, linestatus: u8) -> usize {
     (returnflag as usize) * 256 + (linestatus as usize)
 }
@@ -203,29 +182,6 @@ pub fn write_row_group<W: Write>(lineitems: &[LineItem], writer: &mut TrackedWri
     write_f64_column(lineitems.iter().map(|x| x.l_discount), writer);
     write_f64_column(lineitems.iter().map(|x| x.l_tax), writer);
     write_f64_column(lineitems.iter().map(|x| x.l_extendedprice), writer);
-}
-
-fn write_string_column<'a, I, W: Write>(column: I, writer: &mut TrackedWriter<W>)
-where
-    I: Iterator<Item = &'a String>,
-{
-    let mut iter = column.peekable();
-    while let Some(value) = iter.next() {
-        let mut count = 1;
-        while iter.peek() == Some(&value) {
-            iter.next();
-            count += 1;
-        }
-        writer
-            .write_all(&[
-                value.as_bytes()[0],
-                (count as u32).to_le_bytes()[0],
-                (count as u32).to_le_bytes()[1],
-                (count as u32).to_le_bytes()[2],
-                (count as u32).to_le_bytes()[3],
-            ])
-            .expect("Failed to write");
-    }
 }
 
 fn write_f64_column<I, W: Write>(column: I, writer: &mut TrackedWriter<W>)
@@ -279,5 +235,51 @@ impl<W: Write> TrackedWriter<W> {
     #[allow(dead_code)]
     pub fn into_inner(self) -> std::io::BufWriter<W> {
         self.writer
+    }
+}
+
+fn read_u8_string_entry<R: Read>(reader: &mut std::io::BufReader<R>) -> (u8, u16) {
+    let mut buffer = [0u8; 3];
+    reader.read_exact(&mut buffer).expect("Failed to read");
+    let count = u16::from_le_bytes([buffer[1], buffer[2]]);
+    (buffer[0], count)
+}
+
+pub fn read_u8_string_column<R: Read>(
+    reader: &mut std::io::BufReader<R>,
+    item_count: u16,
+) -> [(u8, u16); MAX_ROW_GROUP_SIZE] {
+    let mut column = [(0u8, 0u16); MAX_ROW_GROUP_SIZE];
+    let mut i = 0;
+    let mut remaining = item_count as i16;
+    while remaining > 0 {
+        let (value, count) = read_u8_string_entry(reader);
+        column[i] = (value, count);
+        remaining -= count as i16;
+        i += 1;
+    }
+    column
+}
+
+pub fn write_string_column<'a, I, W: Write>(column: I, writer: &mut TrackedWriter<W>)
+where
+    I: Iterator<Item = &'a String>,
+{
+    let mut iter = column.peekable();
+    while let Some(value) = iter.next() {
+        let mut count = 1;
+        while iter.peek() == Some(&value) {
+            iter.next();
+            count += 1;
+        }
+        writer
+            .write_all(&[
+                value.as_bytes()[0],
+                (count as u32).to_le_bytes()[0],
+                (count as u32).to_le_bytes()[1],
+                (count as u32).to_le_bytes()[2],
+                (count as u32).to_le_bytes()[3],
+            ])
+            .expect("Failed to write");
     }
 }
