@@ -1,4 +1,4 @@
-use std::io::Cursor;
+use std::io::{Cursor, Read, Write};
 
 pub fn read_u32<R: Read>(reader: &mut std::io::BufReader<R>) -> u32 {
     let mut buffer = [0u8; 4];
@@ -9,6 +9,7 @@ pub fn read_u32<R: Read>(reader: &mut std::io::BufReader<R>) -> u32 {
 pub fn write_u32<W: Write>(writer: &mut std::io::BufWriter<W>, value: u32) {
     writer.write_all(&value.to_le_bytes()).expect("Failed to write");
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -21,6 +22,9 @@ mod tests {
         
         write_u32(&mut writer, test_value);
         writer.flush().unwrap();
+
+        let binding = writer.into_inner().unwrap().clone().into_inner();
+        buffer = Cursor::new(binding);
         
         buffer.set_position(0);
         let mut reader = std::io::BufReader::new(buffer);

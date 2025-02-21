@@ -1,12 +1,13 @@
 use std::io::Read;
 use std::io::Write;
 
+use crate::io;
 use crate::{TrackedWriter, MAX_ROW_GROUP_SIZE};
 
 fn read_u8_string_entry<R: Read>(reader: &mut std::io::BufReader<R>) -> (u8, u32) {
-    let mut buffer = [0u8; 5];
+    let mut buffer = [0u8; 1];
     reader.read_exact(&mut buffer).expect("Failed to read");
-    let count = u32::from_le_bytes([buffer[1], buffer[2], buffer[3], buffer[4]]);
+    let count = io::read_u32(reader);
     (buffer[0], count)
 }
 
