@@ -28,42 +28,44 @@ pub fn write_u8<W: Write>(writer: &mut std::io::BufWriter<W>, value: u8) {
 mod tests {
     use std::io::Cursor;
 
+    use proptest::prelude::*;
     use super::*;
 
-    #[test]
-    fn test_write_read_u8() {
-        let mut buffer = Cursor::new(Vec::new());
-        let mut writer = std::io::BufWriter::new(&mut buffer);
-        let test_value = 42u8;
+    proptest! {
+        #[test]
+        fn test_write_read_u8(test_value: u8) {
+            let mut buffer = Cursor::new(Vec::new());
+            let mut writer = std::io::BufWriter::new(&mut buffer);
 
-        write_u8(&mut writer, test_value);
-        writer.flush().unwrap();
+            write_u8(&mut writer, test_value);
+            writer.flush().unwrap();
 
-        let binding = writer.into_inner().unwrap().clone().into_inner();
-        buffer = Cursor::new(binding);
+            let binding = writer.into_inner().unwrap().clone().into_inner();
+            buffer = Cursor::new(binding);
 
-        buffer.set_position(0);
-        let mut reader = std::io::BufReader::new(buffer);
-        let result = read_u8(&mut reader);
+            buffer.set_position(0);
+            let mut reader = std::io::BufReader::new(buffer);
+            let result = read_u8(&mut reader);
 
-        assert_eq!(result, test_value);
-    }
-    #[test]
-    fn test_write_read_u32() {
-        let mut buffer = Cursor::new(Vec::new());
-        let mut writer = std::io::BufWriter::new(&mut buffer);
-        let test_value = 42u32;
+            prop_assert_eq!(result, test_value);
+        }
 
-        write_u32(&mut writer, test_value);
-        writer.flush().unwrap();
+        #[test]
+        fn test_write_read_u32(test_value: u32) {
+            let mut buffer = Cursor::new(Vec::new());
+            let mut writer = std::io::BufWriter::new(&mut buffer);
 
-        let binding = writer.into_inner().unwrap().clone().into_inner();
-        buffer = Cursor::new(binding);
+            write_u32(&mut writer, test_value);
+            writer.flush().unwrap();
 
-        buffer.set_position(0);
-        let mut reader = std::io::BufReader::new(buffer);
-        let result = read_u32(&mut reader);
+            let binding = writer.into_inner().unwrap().clone().into_inner();
+            buffer = Cursor::new(binding);
 
-        assert_eq!(result, test_value);
+            buffer.set_position(0);
+            let mut reader = std::io::BufReader::new(buffer);
+            let result = read_u32(&mut reader);
+
+            prop_assert_eq!(result, test_value);
+        }
     }
 }
