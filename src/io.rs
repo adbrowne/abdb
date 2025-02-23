@@ -25,9 +25,7 @@ pub fn write_u8<W: Write>(writer: &mut W, value: u8) {
 }
 
 pub fn write_repeated_string<W: Write>(writer: &mut W, value: u8, count: u32) {
-    writer
-        .write_all(&[value])
-        .expect("Failed to write");
+    writer.write_all(&[value]).expect("Failed to write");
     write_u32(writer, count);
 }
 
@@ -41,8 +39,8 @@ pub fn read_repeated_string<R: Read>(reader: &mut R) -> (u8, u32) {
 mod tests {
     use std::io::Cursor;
 
-    use proptest::prelude::*;
     use super::*;
+    use proptest::prelude::*;
 
     proptest! {
         #[test]

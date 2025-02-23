@@ -44,25 +44,36 @@ pub struct StringColumnReader {
     data: [(u8, u32); MAX_ROW_GROUP_SIZE],
     item_count: u16,
     item_index: u16,
-    repeat_index: i16
+    repeat_index: i16,
 }
 
 impl StringColumnReader {
-    pub fn new<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16)  -> Self {
-        StringColumnReader { data: read_u8_string_column(reader, item_count), item_count, item_index: 0, repeat_index: 0 }
+    pub fn new<R: Read>(reader: &mut std::io::BufReader<R>, item_count: u16) -> Self {
+        StringColumnReader {
+            data: read_u8_string_column(reader, item_count),
+            item_count,
+            item_index: 0,
+            repeat_index: 0,
+        }
     }
 }
 
 impl Iterator for StringColumnReader {
     type Item = String;
-    
+
     fn next(&mut self) -> Option<Self::Item> {
-        println!("item_index: {}, repeat_index: {}", self.item_index, self.repeat_index);
+        println!(
+            "item_index: {}, repeat_index: {}",
+            self.item_index, self.repeat_index
+        );
         if self.item_index < self.item_count as u16 {
             let (value, count) = self.data[self.item_index as usize];
             if self.repeat_index < count as i16 {
                 self.repeat_index += 1;
-                return Some(std::string::String::from_utf8(vec![value]).expect("Failed to convert to string"));
+                return Some(
+                    std::string::String::from_utf8(vec![value])
+                        .expect("Failed to convert to string"),
+                );
             } else {
                 self.item_index += 1;
                 self.repeat_index = 0;
@@ -73,7 +84,6 @@ impl Iterator for StringColumnReader {
         }
     }
 }
-
 
 pub fn write_string_column<'a, I, W: Write>(column: I, writer: &mut TrackedWriter<W>)
 where

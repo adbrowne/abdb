@@ -6,18 +6,19 @@ use std::{
 
 mod deltaread;
 
+use abdb::string_column::{read_string_column, read_u8_string_column};
 use abdb::*;
-use abdb::string_column::{read_u8_string_column, read_string_column};
 use clap::{command, Parser, Subcommand};
-use datafusion::{arrow::datatypes::{DataType, Field, Int32Type, Schema}, parquet::schema::types::ColumnPath};
+use datafusion::arrow::array::{Float64Array, StringDictionaryBuilder};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::ArrowWriter;
-use datafusion::prelude::*;
 use datafusion::parquet::basic::Compression;
 use datafusion::parquet::file::properties::WriterProperties;
-use datafusion::
-    arrow::array::{Float64Array, StringDictionaryBuilder}
-;
+use datafusion::prelude::*;
+use datafusion::{
+    arrow::datatypes::{DataType, Field, Int32Type, Schema},
+    parquet::schema::types::ColumnPath,
+};
 
 use duckdb::{Connection, Row};
 use std::sync::Arc;
@@ -287,7 +288,7 @@ fn get_state_index(returnflag: u8, linestatus: u8) -> usize {
 fn update_state_from_row_group<R: Read>(
     reader: &mut std::io::BufReader<R>,
     state: &mut [Option<QueryOneStateColumn>],
-){
+) {
     let item_count = read_u16(reader);
     let mut linestatus = read_u8_string_column(reader, item_count);
     let mut returnflag = read_u8_string_column(reader, item_count);
@@ -311,8 +312,7 @@ fn update_state_from_row_group<R: Read>(
             .iter()
             .map(|x| *x as u64)
             .sum::<u64>();
-        current_state.sum_base_price += extendedprice.data
-            [index..(index + run_length) as usize]
+        current_state.sum_base_price += extendedprice.data[index..(index + run_length) as usize]
             .iter()
             .map(|x| *x as u64)
             .sum::<u64>();
@@ -389,8 +389,7 @@ fn save_data_column() {
     }
 }
 
-
-const QUERY1_SQL : &str = "
+const QUERY1_SQL: &str = "
         SELECT 
             l_returnflag,
             l_linestatus,
@@ -405,7 +404,7 @@ const QUERY1_SQL : &str = "
         FROM lineitem
         GROUP BY l_returnflag, l_linestatus
         ORDER BY l_returnflag, l_linestatus";
-    
+
 async fn query_1_column_parquet() {
     let ctx = SessionContext::new();
 

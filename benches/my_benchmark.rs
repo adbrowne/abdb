@@ -20,10 +20,7 @@ fn sum_non_vectorized(arr: &[i32]) -> i32 {
 
 // Vectorization-friendly implementation
 fn sum_vectorized(arr: &[i32]) -> i32 {
-    arr.iter()
-        .copied()
-        .reduce(|a, b| a + b)
-        .unwrap_or(0)
+    arr.iter().copied().reduce(|a, b| a + b).unwrap_or(0)
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
@@ -33,17 +30,15 @@ fn criterion_benchmark(c: &mut Criterion) {
     for i in 0..10_000 {
         data[i] = i as i32;
     }
-    
+
     // Benchmark non vectorized sum
     c.bench_function("sum non vectorized", |b| {
         b.iter(|| sum_non_vectorized(black_box(&data)))
     });
 
     // Benchmark basic sum
-    c.bench_function("sum basic", |b| {
-        b.iter(|| sum_basic(black_box(&data)))
-    });
-    
+    c.bench_function("sum basic", |b| b.iter(|| sum_basic(black_box(&data))));
+
     // Benchmark vectorized sum
     c.bench_function("sum vectorized", |b| {
         b.iter(|| sum_vectorized(black_box(&data)))

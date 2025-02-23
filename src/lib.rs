@@ -1,5 +1,5 @@
-pub mod string_column;
 pub mod io;
+pub mod string_column;
 use std::{
     cmp::min,
     io::{BufRead, Read, Write},
