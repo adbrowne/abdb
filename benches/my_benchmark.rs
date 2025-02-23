@@ -19,34 +19,6 @@ fn sum_non_vectorized(arr: &[i32]) -> i32 {
     sum
 }
 
-fn complex_sum(arr: &[i32]) -> i32 {
-    let mut sum = 0;
-    let mut i = 0;
-    
-    // Using a while loop with manual index management
-    // and conditional branching to prevent SIMD optimization
-    while i < arr.len() {
-        // Add branching logic that depends on previous elements
-        if i > 0 && arr[i] > arr[i-1] {
-            sum += arr[i] * 2;
-        } else {
-            sum += arr[i];
-        }
-        
-        // Add non-linear index progression
-        if sum % 2 == 0 {
-            i += 1;
-        } else {
-            i += 2;
-            if i >= arr.len() {
-                i = arr.len() - 1;
-            }
-        }
-    }
-    
-    sum
-}
-
 // Vectorization-friendly implementation
 fn sum_vectorized(arr: &[i32]) -> i32 {
     arr.iter().copied().reduce(|a, b| a + b).unwrap_or(0)
@@ -103,7 +75,7 @@ pub unsafe fn sum_intrinsics_optimized(arr: &[i32]) -> i32 {
     sum
 }
 
-fn criterion_benchmark(c: &mut Criterion) {
+fn sum_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("Sum array");
     // Create test data
     //let data: Vec<i32> = (0..10_000).collect();
@@ -112,10 +84,6 @@ fn criterion_benchmark(c: &mut Criterion) {
         data[i] = i as i32;
     }
 
-    // Benchmark complex sum
-    group.bench_function("sum complex", |b| {
-        b.iter(|| black_box(complex_sum(black_box(&data))))
-    });
     // Benchmark non vectorized sum
     group.bench_function("sum non vectorized", |b| {
         b.iter(|| black_box(sum_non_vectorized(black_box(&data))))
@@ -139,5 +107,6 @@ fn criterion_benchmark(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, criterion_benchmark);
+criterion_group!(benches, sum_benchmark);
 criterion_main!(benches);
+
