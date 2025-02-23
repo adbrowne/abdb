@@ -86,15 +86,7 @@ where
             iter.next();
             count += 1;
         }
-        writer
-            .write_all(&[
-                value.as_bytes()[0],
-                (count as u32).to_le_bytes()[0],
-                (count as u32).to_le_bytes()[1],
-                (count as u32).to_le_bytes()[2],
-                (count as u32).to_le_bytes()[3],
-            ])
-            .expect("Failed to write");
+        io::write_repeated_string(writer, value.as_bytes()[0], count);
     }
 }
 
