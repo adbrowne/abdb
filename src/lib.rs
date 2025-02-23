@@ -163,6 +163,15 @@ pub struct LineItem {
     pub l_tax: f64,
 }
 
+pub fn write_batch(writer: &mut TrackedWriter<std::io::BufWriter<std::fs::File>>, batch: &mut Vec<LineItem>) {
+    batch.sort_by(|a, b| {
+        a.l_returnflag
+            .cmp(&b.l_returnflag)
+            .then(a.l_linestatus.cmp(&b.l_linestatus))
+    });
+    write_row_group(&*batch, writer);
+}
+
 pub fn write_row_group<W: Write>(lineitems: &[LineItem], writer: &mut TrackedWriter<W>) {
     let item_count = (lineitems.len() as u16).to_le_bytes();
     writer.write_all(&item_count).expect("Failed to write");

@@ -374,18 +374,13 @@ fn save_data_column() {
         batch.push(lineitem);
 
         if batch.len() == 8000 {
-            batch.sort_by(|a, b| {
-                a.l_returnflag
-                    .cmp(&b.l_returnflag)
-                    .then(a.l_linestatus.cmp(&b.l_linestatus))
-            });
-            write_row_group(&batch, &mut writer);
+            write_batch(&mut writer, &mut batch);
             batch.clear();
         }
     }
 
     if !batch.is_empty() {
-        write_row_group(&batch, &mut writer);
+        write_batch(&mut writer, &mut batch);
     }
 }
 
