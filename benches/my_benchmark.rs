@@ -1,3 +1,4 @@
+use abdb::{write_batch, LineItem, TrackedWriter};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use std::arch::aarch64::*;
 
@@ -75,6 +76,37 @@ pub unsafe fn sum_intrinsics_optimized(arr: &[i32]) -> i32 {
     sum
 }
 
+fn write_column_data() {
+    let file = std::fs::File::create("lineitems_column_criterion.bin").expect("Failed to create file");
+    let mut writer = TrackedWriter::new(std::io::BufWriter::new(file));
+    for _ in 0..10 {
+        let mut batch = vec![
+            LineItem {
+                l_returnflag: "A".to_string(),
+                l_linestatus: "B".to_string(),
+                l_quantity: 1.0,
+                l_extendedprice: 2.0,
+                l_discount: 3.0,
+                l_tax: 4.0,
+            },
+            LineItem {
+                l_returnflag: "C".to_string(),
+                l_linestatus: "D".to_string(),
+                l_quantity: 5.0,
+                l_extendedprice: 6.0,
+                l_discount: 7.0,
+                l_tax: 8.0,
+            },
+        ];
+        batch.extend(std::iter::repeat(batch.clone()).take(3999).flatten());
+        write_batch(&mut writer, &mut batch);
+    }
+}
+
+fn query_1_column() -> Vec<Option<abdb::QueryOneStateColumn>> {
+    abdb::query_1_column("lineitems_column_criterion.bin")
+}
+
 fn sum_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("Sum array");
     // Create test data
@@ -105,8 +137,14 @@ fn sum_benchmark(c: &mut Criterion) {
     });
 
     group.finish();
+
 }
 
-criterion_group!(benches, sum_benchmark);
+fn group_by_sum_benchmark(c: &mut Criterion) {
+    write_column_data();
+    c.bench_function("query_1_column", |b| b.iter(|| black_box(query_1_column())));
+}
+
+criterion_group!(benches, sum_benchmark, group_by_sum_benchmark);
 criterion_main!(benches);
 

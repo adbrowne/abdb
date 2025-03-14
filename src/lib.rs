@@ -16,7 +16,7 @@ struct QueryOneState {
 }
 
 #[derive(Debug, Default, PartialEq, Clone)]
-struct QueryOneStateColumn {
+pub struct QueryOneStateColumn {
     count: u64,
     sum_qty: u64,
     sum_base_price: u64,
@@ -24,19 +24,18 @@ struct QueryOneStateColumn {
     sum_tax: u64,
 }
 
-pub fn query_1_column() {
-    let file = std::fs::File::open("lineitems_column.bin").expect("Failed to open file");
+pub fn query_1_column(path: &str) -> Vec<Option<QueryOneStateColumn>> {
+    let file = std::fs::File::open(path).expect("Failed to open file");
     let mut reader = std::io::BufReader::new(file);
     let mut state: Vec<Option<QueryOneStateColumn>> = vec![None; 256 * 256];
 
     loop {
         if reader.fill_buf().unwrap().is_empty() {
-            println!("End of file");
             break;
         }
         update_state_from_row_group(&mut reader, &mut state);
     }
-    print_state_column(state);
+    state
 }
 
 fn update_state_from_row_group<R: Read>(
@@ -92,7 +91,7 @@ fn update_state_from_row_group<R: Read>(
     }
 }
 
-fn print_state_column(state: Vec<Option<QueryOneStateColumn>>) {
+pub fn print_state_column(state: Vec<Option<QueryOneStateColumn>>) {
     for i in 0..256 {
         for j in 0..256 {
             if let Some(state_column) = &state[i * 256 + j] {
