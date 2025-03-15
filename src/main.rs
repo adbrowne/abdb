@@ -290,8 +290,8 @@ fn update_state_from_row_group<R: Read>(
     state: &mut [Option<QueryOneStateColumn>],
 ) {
     let item_count = read_u16(reader);
-    let mut linestatus = read_u8_string_column(reader, item_count);
-    let mut returnflag = read_u8_string_column(reader, item_count);
+    let mut linestatus = read_u8_string_column(reader, item_count).1;
+    let mut returnflag = read_u8_string_column(reader, item_count).1;
     let quantity = read_u16_column(reader, item_count);
     let discount = read_u16_column(reader, item_count);
     let tax = read_u16_column(reader, item_count);

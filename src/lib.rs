@@ -50,8 +50,8 @@ fn update_state_from_row_group<R: Read>(
     state: &mut Vec<Option<QueryOneStateColumn>>,
 ) -> () {
     let item_count = read_u16(reader);
-    let mut linestatus = read_u8_string_column(reader, item_count);
-    let mut returnflag = read_u8_string_column(reader, item_count);
+    let mut linestatus = read_u8_string_column(reader, item_count).1;
+    let mut returnflag = read_u8_string_column(reader, item_count).1;
     let quantity = read_u16_column(reader, item_count);
     let discount = read_u16_column(reader, item_count);
     let tax = read_u16_column(reader, item_count);
@@ -168,8 +168,8 @@ pub fn write_batch(writer: &mut TrackedWriter<std::io::BufWriter<std::fs::File>>
 pub fn write_row_group<W: Write>(lineitems: &[LineItem], writer: &mut TrackedWriter<W>) {
     let item_count = (lineitems.len() as u16).to_le_bytes();
     writer.write_all(&item_count).expect("Failed to write");
-    write_string_column(lineitems.iter().map(|x| &x.l_linestatus), writer);
-    write_string_column(lineitems.iter().map(|x| &x.l_returnflag), writer);
+    write_string_column(lineitems.iter().map(|x| x.l_linestatus.as_str()), writer);
+    write_string_column(lineitems.iter().map(|x| x.l_returnflag.as_str()), writer);
     write_f64_column(lineitems.iter().map(|x| x.l_quantity), writer);
     write_f64_column(lineitems.iter().map(|x| x.l_discount), writer);
     write_f64_column(lineitems.iter().map(|x| x.l_tax), writer);

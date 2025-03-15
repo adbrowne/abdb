@@ -1,4 +1,4 @@
-use abdb::{write_batch, LineItem, TrackedWriter};
+use abdb::{string_column::StringColumnReader, write_batch, LineItem, TrackedWriter};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use std::arch::aarch64::*;
 
@@ -145,6 +145,33 @@ fn group_by_sum_benchmark(c: &mut Criterion) {
     c.bench_function("query_1_column", |b| b.iter(|| black_box(query_1_column())));
 }
 
-criterion_group!(benches, sum_benchmark, group_by_sum_benchmark);
-criterion_main!(benches);
+fn write_string_column() {
+    let file = std::fs::File::create("string_column_criterion.bin").expect("Failed to create file");
+    let mut writer = TrackedWriter::new(std::io::BufWriter::new(file));
+    let data = vec!["a", "a", "b", "b", "b", "c"].repeat(1000);
 
+    for _ in 0..99 {  // 1 time already called above, so 99 more
+        let col = StringColumnReader::new_from_strings(data.clone());
+        col.write(&mut writer);
+    }
+}
+
+fn read_all_strings() -> u64 {
+    let file = std::fs::File::open("string_column_criterion.bin").expect("Failed to open file");
+    let mut reader = std::io::BufReader::new(file);
+    let mut col = StringColumnReader::empty();
+    let mut count = 0;
+    for _ in 0..99 {
+        col.read(&mut reader);
+        count += col.count_strings(); // Using count() to get the number of strings
+    }
+    count
+}
+
+fn read_and_write_strings_benchmark(c: &mut Criterion) {
+    write_string_column();
+    c.bench_function("read_string_column", |b| b.iter(|| black_box(read_all_strings())));
+}
+
+criterion_group!(benches, sum_benchmark, group_by_sum_benchmark, read_and_write_strings_benchmark);
+criterion_main!(benches);
