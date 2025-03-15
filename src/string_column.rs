@@ -2,6 +2,7 @@ use std::io::Read;
 use std::io::Write;
 
 use crate::io;
+use crate::io::read_u64;
 use crate::{TrackedWriter, MAX_ROW_GROUP_SIZE};
 
 fn read_u8_string_entry<R: Read>(reader: &mut std::io::BufReader<R>) -> (u8, u32) {
@@ -31,6 +32,7 @@ pub fn read_u8_string_column<R: Read>(
     let mut column = [(0u8, 0u32); MAX_ROW_GROUP_SIZE];
     let mut i = 0;
     let mut remaining = item_count as i16;
+    let _items = read_u64(reader);
     while remaining > 0 {
         let (value, count) = read_u8_string_entry(reader);
         column[i] = (value, count);
@@ -85,11 +87,17 @@ impl Iterator for StringColumnReader {
     }
 }
 
+
 pub fn write_string_column<'a, I, W: Write>(column: I, writer: &mut TrackedWriter<W>)
 where
     I: Iterator<Item = &'a String>,
+    I: Clone
 {
     let mut iter = column.peekable();
+    let column_length = count_column_length(iter.clone());
+    
+    io::write_u64(writer, column_length);
+    // Clone the iterator to avoid consuming it when we count
     while let Some(value) = iter.next() {
         let mut count = 1;
         while iter.peek() == Some(&value) {
@@ -98,6 +106,21 @@ where
         }
         io::write_repeated_string(writer, value.as_bytes()[0], count);
     }
+}
+
+fn count_column_length<'a, I>(iter: I) -> u64
+where
+    I: Iterator<Item = &'a String>,
+{
+    let mut result : u64 = 0;
+    let mut iter = iter.peekable();
+    while let Some(value) = iter.next() {
+        while iter.peek() == Some(&value) {
+            iter.next();
+        }
+        result += 1; // Count each unique run as one entry
+    }
+    result
 }
 
 #[cfg(test)]

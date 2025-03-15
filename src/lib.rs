@@ -38,6 +38,13 @@ pub fn query_1_column(path: &str) -> Vec<Option<QueryOneStateColumn>> {
     state
 }
 
+fn sum_u16s(data: &U16column, start: usize, count: usize) -> u64 {
+    data.data[start..start + count]
+        .iter()
+        .map(|x| *x as u64)
+        .sum::<u64>()
+}
+
 fn update_state_from_row_group<R: Read>(
     reader: &mut std::io::BufReader<R>,
     state: &mut Vec<Option<QueryOneStateColumn>>,
@@ -61,24 +68,11 @@ fn update_state_from_row_group<R: Read>(
         let current_state =
             state[get_state_index(last_returnflag.0, last_linestatus.0)].get_or_insert_default();
 
-        current_state.sum_qty += quantity.data[index as usize..(index + run_length) as usize]
-            .iter()
-            .map(|x| *x as u64)
-            .sum::<u64>();
-        current_state.sum_base_price += extendedprice.data
-            [index as usize..(index + run_length) as usize]
-            .iter()
-            .map(|x| *x as u64)
-            .sum::<u64>();
-        current_state.sum_discount += discount.data[index as usize..(index + run_length) as usize]
-            .iter()
-            .map(|x| *x as u64)
-            .sum::<u64>();
-        current_state.sum_tax += tax.data[index as usize..(index + run_length) as usize]
-            .iter()
-            .map(|x| *x as u64)
-            .sum::<u64>();
-
+        current_state.sum_qty += sum_u16s(&quantity, index, run_length) ;
+        current_state.count += run_length as u64;
+        current_state.sum_base_price += sum_u16s(&extendedprice, index, run_length);
+        current_state.sum_discount += sum_u16s(&discount, index, run_length);
+        current_state.sum_tax += sum_u16s(&tax, index, run_length);
         returnflag[last_returnflag_index].1 -= run_length as u32;
         linestatus[last_linestatus_index].1 -= run_length as u32;
         if returnflag[last_returnflag_index].1 == 0 {

@@ -12,6 +12,18 @@ pub fn write_u32<W: Write>(writer: &mut W, value: u32) {
         .expect("Failed to write");
 }
 
+pub fn write_u64<W: Write>(writer: &mut W, value: u64) {
+    writer
+        .write_all(&value.to_le_bytes())
+        .expect("Failed to write");
+}
+
+pub fn read_u64<R: Read>(reader: &mut R) -> u64 {
+    let mut buffer = [0u8; 8];
+    reader.read_exact(&mut buffer).expect("Failed to read");
+    u64::from_le_bytes(buffer)
+}
+
 pub fn read_u8<R: Read>(reader: &mut R) -> u8 {
     let mut buffer = [0u8; 1];
     reader.read_exact(&mut buffer).expect("Failed to read");
