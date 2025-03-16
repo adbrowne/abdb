@@ -12,7 +12,7 @@ pub struct StringColumnReader {
     repeat_index: i16,
 }
 
-pub fn read_u8_string_column_to_vec<R: Read>(
+fn read_u8_string_column_to_vec<R: Read>(
     reader: &mut std::io::BufReader<R>,
     data : &mut Vec<(u8, u32)>
 ) -> u64 {
@@ -34,7 +34,7 @@ pub fn read_u8_string_column_to_vec<R: Read>(
     column_entries
 }
 
-pub fn write_u8_string_column_from_vec<W: Write>(
+fn write_u8_string_column_from_vec<W: Write>(
     writer: &mut TrackedWriter<W>,
     data: &[(u8, u32)]
 ) {
