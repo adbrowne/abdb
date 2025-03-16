@@ -1,12 +1,11 @@
 use std::{
     array::{self},
-    cmp::min,
     io::{BufRead, Read, Write},
 };
 
 mod deltaread;
 
-use abdb::string_column::{read_string_column, read_u8_string_column};
+use abdb::string_column::StringColumnReader;
 use abdb::*;
 use clap::{command, Parser, Subcommand};
 use datafusion::arrow::array::{Float64Array, StringDictionaryBuilder};
@@ -70,8 +69,8 @@ fn read_file() {
 fn read_row_group<R: Read>(reader: &mut std::io::BufReader<R>) -> Vec<LineItem> {
     let item_count = read_u16(reader);
     let mut lineitems = Vec::new();
-    let linestatus = read_string_column(reader, item_count);
-    let returnflag = read_string_column(reader, item_count);
+    let linestatus : Vec<String> = StringColumnReader::new(reader).collect();
+    let returnflag : Vec<String> = StringColumnReader::new(reader).collect();
     let quantity = read_f64_column(reader, item_count);
     let discount = read_f64_column(reader, item_count);
     let tax = read_f64_column(reader, item_count);
@@ -281,71 +280,6 @@ fn main() {
     //query_1();
 }
 
-fn get_state_index(returnflag: u8, linestatus: u8) -> usize {
-    (returnflag as usize) * 256 + (linestatus as usize)
-}
-
-fn update_state_from_row_group<R: Read>(
-    reader: &mut std::io::BufReader<R>,
-    state: &mut [Option<QueryOneStateColumn>],
-) {
-    let item_count = read_u16(reader);
-    let mut linestatus = read_u8_string_column(reader, item_count).1;
-    let mut returnflag = read_u8_string_column(reader, item_count).1;
-    let quantity = read_u16_column(reader, item_count);
-    let discount = read_u16_column(reader, item_count);
-    let tax = read_u16_column(reader, item_count);
-    let extendedprice = read_u16_column(reader, item_count);
-
-    let mut last_returnflag_index = 0;
-    let mut last_linestatus_index = 0;
-    let mut index: usize = 0;
-    while index < item_count as usize {
-        let last_returnflag = returnflag[last_returnflag_index];
-        let last_linestatus = linestatus[last_linestatus_index];
-        let run_length = min(last_returnflag.1, last_linestatus.1) as usize;
-
-        let current_state =
-            state[get_state_index(last_returnflag.0, last_linestatus.0)].get_or_insert_default();
-
-        current_state.sum_qty += quantity.data[index..(index + run_length) as usize]
-            .iter()
-            .map(|x| *x as u64)
-            .sum::<u64>();
-        current_state.sum_base_price += extendedprice.data[index..(index + run_length) as usize]
-            .iter()
-            .map(|x| *x as u64)
-            .sum::<u64>();
-        current_state.sum_discount += discount.data[index..(index + run_length) as usize]
-            .iter()
-            .map(|x| *x as u64)
-            .sum::<u64>();
-        current_state.sum_tax += tax.data[index..(index + run_length) as usize]
-            .iter()
-            .map(|x| *x as u64)
-            .sum::<u64>();
-
-        returnflag[last_returnflag_index].1 -= run_length as u32;
-        linestatus[last_linestatus_index].1 -= run_length as u32;
-        if returnflag[last_returnflag_index].1 == 0 as u32 {
-            last_returnflag_index += 1;
-        }
-        if linestatus[last_linestatus_index].1 == 0 as u32 {
-            last_linestatus_index += 1;
-        }
-        index += run_length;
-    }
-}
-
-#[derive(Debug, Default, PartialEq, Clone)]
-struct QueryOneStateColumn {
-    count: u64,
-    sum_qty: u64,
-    sum_base_price: u64,
-    sum_discount: u64,
-    sum_tax: u64,
-}
-
 fn query_1_column() {
     let file = std::fs::File::open("lineitems_column.bin").expect("Failed to open file");
     let mut reader = std::io::BufReader::new(file);
@@ -356,6 +290,7 @@ fn query_1_column() {
             println!("End of file");
             break;
         }
+        
         update_state_from_row_group(&mut reader, &mut state);
     }
     print_state_column(state);

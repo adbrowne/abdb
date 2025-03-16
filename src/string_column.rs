@@ -5,44 +5,6 @@ use crate::io;
 use crate::io::read_u64;
 use crate::{TrackedWriter, MAX_ROW_GROUP_SIZE};
 
-fn read_u8_string_entry<R: Read>(reader: &mut std::io::BufReader<R>) -> (u8, u32) {
-    let mut buffer = [0u8; 1];
-    reader.read_exact(&mut buffer).expect("Failed to read");
-    let count = io::read_u32(reader);
-    (buffer[0], count)
-}
-
-pub fn read_string_column<R: Read>(
-    reader: &mut std::io::BufReader<R>,
-    item_count: u16,
-) -> Vec<std::string::String> {
-    let mut result = Vec::with_capacity(MAX_ROW_GROUP_SIZE);
-    for (u8_value, repeat_count) in read_u8_string_column(reader, item_count).1.iter() {
-        let value = String::from_utf8(vec![*u8_value]).expect("Failed to convert to string");
-        let r = vec![value; *repeat_count as usize];
-        result.extend(r);
-    }
-    result
-}
-
-
-pub fn read_u8_string_column<R: Read>(
-    reader: &mut std::io::BufReader<R>,
-    item_count: u16,
-) -> (u64, [(u8, u32); MAX_ROW_GROUP_SIZE]) {
-    let mut column = [(0u8, 0u32); MAX_ROW_GROUP_SIZE];
-    let mut i = 0;
-    let mut remaining = item_count as i16;
-    let column_entries = read_u64(reader);
-    while remaining > 0 {
-        let (value, count) = read_u8_string_entry(reader);
-        column[i] = (value, count);
-        remaining -= count as i16;
-        i += 1;
-    }
-    (column_entries, column)
-}
-
 pub struct StringColumnReader {
     data: Vec<(u8, u32)>,
     column_entries: u64,
@@ -143,6 +105,10 @@ impl StringColumnReader {
         write_u8_string_column_from_vec(writer, &self.data);
     }
 
+    pub fn compressed_iterator(&self) -> impl Iterator<Item = &(u8, u32)> {
+        self.data.iter()
+    }
+
     pub fn read(&mut self, reader: &mut std::io::BufReader<impl Read>) {
         self.column_entries = read_u8_string_column_to_vec(reader, &mut self.data);
         self.item_index = 0;
@@ -181,46 +147,9 @@ impl Iterator for StringColumnReader {
     }
 }
 
-pub fn write_string_column<'a, I, W: Write>(column: I, writer: &mut TrackedWriter<W>)
-where
-    I: Iterator<Item = &'a str>,
-    I: Clone
-{
-    let mut iter = column.peekable();
-    let column_length = count_column_length(iter.clone());
-    
-    io::write_u64(writer, column_length);
-    // Clone the iterator to avoid consuming it when we count
-    while let Some(value) = iter.next() {
-        let mut count = 1;
-        while iter.peek() == Some(&value) {
-            iter.next();
-            count += 1;
-        }
-        io::write_repeated_string(writer, value.as_bytes()[0], count);
-    }
-}
-
-fn count_column_length<'a, I>(iter: I) -> u64
-where
-    I: Iterator<Item = &'a str>,
-{
-    let mut result : u64 = 0;
-    let mut iter = iter.peekable();
-    while let Some(value) = iter.next() {
-        while iter.peek() == Some(&value) {
-            iter.next();
-        }
-        result += 1; // Count each unique run as one entry
-    }
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use std::io::{BufReader, Cursor};
-
-    use datafusion::datasource::file_format::write;
 
     use super::*;
 

@@ -5,7 +5,7 @@ use std::{
     io::{BufRead, Read, Write},
 };
 static MAX_ROW_GROUP_SIZE: usize = 8000;
-use string_column::{read_u8_string_column, write_string_column};
+use string_column::StringColumnReader;
 #[derive(Debug, Default, PartialEq, Clone)]
 struct QueryOneState {
     count: u64,
@@ -17,11 +17,11 @@ struct QueryOneState {
 
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct QueryOneStateColumn {
-    count: u64,
-    sum_qty: u64,
-    sum_base_price: u64,
-    sum_discount: u64,
-    sum_tax: u64,
+    pub count: u64,
+    pub sum_qty: u64,
+    pub sum_base_price: u64,
+    pub sum_discount: u64,
+    pub sum_tax: u64,
 }
 
 pub fn query_1_column(path: &str) -> Vec<Option<QueryOneStateColumn>> {
@@ -45,42 +45,59 @@ fn sum_u16s(data: &U16column, start: usize, count: usize) -> u64 {
         .sum::<u64>()
 }
 
-fn update_state_from_row_group<R: Read>(
+pub fn update_state_from_row_group<R: Read>(
     reader: &mut std::io::BufReader<R>,
     state: &mut Vec<Option<QueryOneStateColumn>>,
 ) -> () {
     let item_count = read_u16(reader);
-    let mut linestatus = read_u8_string_column(reader, item_count).1;
-    let mut returnflag = read_u8_string_column(reader, item_count).1;
+    let linestatus_column = StringColumnReader::new(reader);
+    let mut linestatus = linestatus_column.compressed_iterator();
+    let returnflag_column = StringColumnReader::new(reader);
+    let mut returnflag = returnflag_column.compressed_iterator();
     let quantity = read_u16_column(reader, item_count);
     let discount = read_u16_column(reader, item_count);
     let tax = read_u16_column(reader, item_count);
     let extendedprice = read_u16_column(reader, item_count);
 
-    let mut last_returnflag_index = 0;
-    let mut last_linestatus_index = 0;
     let mut index: usize = 0;
+    let mut current_returnflag = None;
+    let mut current_returnflag_count = 0;
+    let mut current_linestatus = None;
+    let mut current_linestatus_count = 0;
+    
     while index < item_count as usize {
-        let last_returnflag = returnflag[last_returnflag_index];
-        let last_linestatus = linestatus[last_linestatus_index];
-        let run_length = min(last_returnflag.1, last_linestatus.1) as usize;
-
-        let current_state =
-            state[get_state_index(last_returnflag.0, last_linestatus.0)].get_or_insert_default();
-
-        current_state.sum_qty += sum_u16s(&quantity, index, run_length) ;
+        // Get new values if we've used up the current ones
+        if current_returnflag_count == 0 {
+            let (rf_char, rf_count) = returnflag.next().expect("Returnflag ended early");
+            current_returnflag = Some(rf_char);
+            current_returnflag_count = *rf_count;
+        }
+        
+        if current_linestatus_count == 0 {
+            let (ls_char, ls_count) = linestatus.next().expect("Linestatus ended early");
+            current_linestatus = Some(ls_char);
+            current_linestatus_count = *ls_count;
+        }
+        
+        let run_length = min(current_returnflag_count as usize, current_linestatus_count as usize);
+        
+        let rf_char = current_returnflag.unwrap();
+        let ls_char = current_linestatus.unwrap();
+        let current_index = get_state_index(rf_char, ls_char);
+        
+        let current_state = state[current_index].get_or_insert_with(|| QueryOneStateColumn::default());
+        
+        // Update the state with this run
         current_state.count += run_length as u64;
+        current_state.sum_qty += sum_u16s(&quantity, index, run_length);
         current_state.sum_base_price += sum_u16s(&extendedprice, index, run_length);
         current_state.sum_discount += sum_u16s(&discount, index, run_length);
         current_state.sum_tax += sum_u16s(&tax, index, run_length);
-        returnflag[last_returnflag_index].1 -= run_length as u32;
-        linestatus[last_linestatus_index].1 -= run_length as u32;
-        if returnflag[last_returnflag_index].1 == 0 {
-            last_returnflag_index += 1;
-        }
-        if linestatus[last_linestatus_index].1 == 0 as u32 {
-            last_linestatus_index += 1;
-        }
+
+        // Update the remaining counts
+        current_returnflag_count -= run_length as u32;
+        current_linestatus_count -= run_length as u32;
+        
         index += run_length;
     }
 }
@@ -133,8 +150,8 @@ pub fn read_f64_column<R: Read>(reader: &mut std::io::BufReader<R>, item_count: 
         .collect()
 }
 
-fn get_state_index(returnflag: u8, linestatus: u8) -> usize {
-    (returnflag as usize) * 256 + (linestatus as usize)
+pub fn get_state_index(returnflag: &u8, linestatus: &u8) -> usize {
+    (*returnflag as usize) * 256 + (*linestatus as usize)
 }
 pub struct U16column {
     pub data: [u16; MAX_ROW_GROUP_SIZE],
@@ -168,8 +185,10 @@ pub fn write_batch(writer: &mut TrackedWriter<std::io::BufWriter<std::fs::File>>
 pub fn write_row_group<W: Write>(lineitems: &[LineItem], writer: &mut TrackedWriter<W>) {
     let item_count = (lineitems.len() as u16).to_le_bytes();
     writer.write_all(&item_count).expect("Failed to write");
-    write_string_column(lineitems.iter().map(|x| x.l_linestatus.as_str()), writer);
-    write_string_column(lineitems.iter().map(|x| x.l_returnflag.as_str()), writer);
+    let lineitems_column = StringColumnReader::new_from_strings(lineitems.iter().map(|x| x.l_linestatus.as_str()).collect());
+    lineitems_column.write(writer);
+    let returnflag_column = StringColumnReader::new_from_strings(lineitems.iter().map(|x| x.l_returnflag.as_str()).collect());
+    returnflag_column.write(writer);
     write_f64_column(lineitems.iter().map(|x| x.l_quantity), writer);
     write_f64_column(lineitems.iter().map(|x| x.l_discount), writer);
     write_f64_column(lineitems.iter().map(|x| x.l_tax), writer);

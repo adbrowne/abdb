@@ -108,9 +108,9 @@ fn test_update_state_from_row_group() {
         update_state_from_row_group(&mut reader, &mut state);
     }
     assert_eq!(
-        state[get_state_index(b'A', b'B')],
+        state[get_state_index(&b'A', &b'B')],
         Some(QueryOneStateColumn {
-            count: 0,
+            count: 2000,
             sum_qty: 200000,
             sum_base_price: 400000,
             sum_discount: 600000,
@@ -121,7 +121,7 @@ fn test_update_state_from_row_group() {
 
 #[test]
 fn test_get_state_index() {
-    assert_eq!(get_state_index(b'A', b'F'), 65 * 256 + 70);
-    assert_eq!(get_state_index(b'B', b'O'), 66 * 256 + 79);
-    assert_eq!(get_state_index(b'C', b'N'), 67 * 256 + 78);
+    assert_eq!(get_state_index(&b'A', &b'F'), 65 * 256 + 70);
+    assert_eq!(get_state_index(&b'B', &b'O'), 66 * 256 + 79);
+    assert_eq!(get_state_index(&b'C', &b'N'), 67 * 256 + 78);
 }
