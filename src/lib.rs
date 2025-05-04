@@ -9,12 +9,12 @@ static MAX_ROW_GROUP_SIZE: usize = 8000;
 use string_column::StringColumnReader;
 use f64_column::write_f64_column;
 #[derive(Debug, Default, PartialEq, Clone)]
-struct QueryOneState {
-    count: u64,
-    sum_qty: f64,
-    sum_base_price: f64,
-    sum_disc_price: f64,
-    sum_charge: f64,
+pub struct QueryOneState {
+    pub count: u64,
+    pub sum_qty: f64,
+    pub sum_base_price: f64,
+    pub sum_disc_price: f64,
+    pub sum_charge: f64,
 }
 
 #[derive(Debug, Default, PartialEq, Clone)]

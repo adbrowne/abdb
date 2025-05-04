@@ -43,15 +43,6 @@ enum Commands {
     ReadFile,
 }
 
-#[derive(Debug, Default, PartialEq, Clone)]
-struct QueryOneState {
-    count: u64,
-    sum_qty: f64,
-    sum_base_price: f64,
-    sum_disc_price: f64,
-    sum_charge: f64,
-}
-
 fn read_file() {
     let file = std::fs::File::open("lineitems_column.bin").expect("Failed to open file");
 
@@ -90,12 +81,6 @@ fn read_row_group<R: Read>(reader: &mut std::io::BufReader<R>) -> Vec<LineItem> 
     }
 
     lineitems
-}
-
-fn read_u16<R: Read>(reader: &mut std::io::BufReader<R>) -> u16 {
-    let mut buffer = [0u8; 2];
-    reader.read_exact(&mut buffer).expect("Failed to read");
-    u16::from_le_bytes(buffer)
 }
 
 fn query_1() {
@@ -152,28 +137,6 @@ fn print_state(state: [Option<QueryOneState>; 256 * 256]) {
                     l_linestatus,
                     state[i * 256 + j]
                 );
-            }
-        }
-    }
-}
-
-fn print_state_column(state: Vec<Option<QueryOneStateColumn>>) {
-    for i in 0..256 {
-        for j in 0..256 {
-            if let Some(state_column) = &state[i * 256 + j] {
-                let l_returnflag = String::from_utf8(vec![i as u8]).unwrap();
-                let l_linestatus = String::from_utf8(vec![j as u8]).unwrap();
-                let state = QueryOneState {
-                    count: state_column.count,
-                    sum_qty: state_column.sum_qty as f64 / 100.0,
-                    sum_base_price: state_column.sum_base_price as f64 / 100.0,
-                    sum_disc_price: state_column.sum_base_price as f64 / 100.0
-                        * (1.0 - state_column.sum_discount as f64 / 100.0),
-                    sum_charge: state_column.sum_base_price as f64 / 100.0
-                        * (1.0 - state_column.sum_discount as f64 / 100.0)
-                        * (1.0 + state_column.sum_tax as f64 / 100.0),
-                };
-                println!("{}, {}, {:?}", l_returnflag, l_linestatus, state);
             }
         }
     }
@@ -283,18 +246,7 @@ fn main() {
 }
 
 fn query_1_column() {
-    let file = std::fs::File::open("lineitems_column.bin").expect("Failed to open file");
-    let mut reader = std::io::BufReader::new(file);
-    let mut state: Vec<Option<QueryOneStateColumn>> = vec![None; 256 * 256];
-
-    loop {
-        if reader.fill_buf().unwrap().is_empty() {
-            println!("End of file");
-            break;
-        }
-        
-        update_state_from_row_group(&mut reader, &mut state);
-    }
+    let state = query_1_column("lineitems_column.bin");
     print_state_column(state);
 }
 
