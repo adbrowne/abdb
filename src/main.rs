@@ -21,6 +21,8 @@ use datafusion::{
 
 use duckdb::{Connection, Row};
 use std::sync::Arc;
+use abdb::f64_column::compress_f64;
+
 mod tests;
 #[derive(Parser)]
 #[command(version, about, long_about = None)]

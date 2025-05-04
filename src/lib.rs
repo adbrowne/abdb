@@ -1,11 +1,13 @@
 pub mod io;
 pub mod string_column;
+pub mod f64_column;
 use std::{
     cmp::min,
     io::{BufRead, Read, Write},
 };
 static MAX_ROW_GROUP_SIZE: usize = 8000;
 use string_column::StringColumnReader;
+use f64_column::write_f64_column;
 #[derive(Debug, Default, PartialEq, Clone)]
 struct QueryOneState {
     count: u64,
@@ -195,23 +197,6 @@ pub fn write_row_group<W: Write>(lineitems: &[LineItem], writer: &mut TrackedWri
     write_f64_column(lineitems.iter().map(|x| x.l_extendedprice), writer);
 }
 
-fn write_f64_column<I, W: Write>(column: I, writer: &mut TrackedWriter<W>)
-where
-    I: Iterator<Item = f64>,
-{
-    let mut buffer = [0u8; 2];
-    for value in column {
-        let compressed = compress_f64(value);
-        buffer.copy_from_slice(&compressed.to_le_bytes());
-        writer.write_all(&buffer).expect("Failed to write");
-    }
-}
-
-pub fn compress_f64(f: f64) -> u16 {
-    let f = f * 100.0;
-    let f = f.round();
-    f as u16
-}
 pub struct TrackedWriter<W: Write> {
     writer: std::io::BufWriter<W>,
     bytes_written: usize,
