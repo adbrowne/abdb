@@ -1,5 +1,11 @@
 use std::io::{Read, Write};
 
+pub fn read_u16<R: Read>(reader: &mut std::io::BufReader<R>) -> u16 {
+    let mut buffer = [0u8; 2];
+    reader.read_exact(&mut buffer).expect("Failed to read u16");
+    u16::from_le_bytes(buffer)
+}
+
 pub fn read_u32<R: Read>(reader: &mut R) -> u32 {
     let mut buffer = [0u8; 4];
     reader.read_exact(&mut buffer).expect("Failed to read");

@@ -1,11 +1,10 @@
 use std::{
     array::{self},
-    io::{BufRead, Read, Write},
+    io::{Read, Write},
 };
 
 mod deltaread;
 
-use abdb::string_column::StringColumnReader;
 use abdb::*;
 use clap::{command, Parser, Subcommand};
 use datafusion::arrow::array::{Float64Array, StringDictionaryBuilder};
@@ -19,9 +18,9 @@ use datafusion::{
     parquet::schema::types::ColumnPath,
 };
 
+use abdb::f64_column::compress_f64;
 use duckdb::{Connection, Row};
 use std::sync::Arc;
-use abdb::f64_column::compress_f64;
 
 mod tests;
 #[derive(Parser)]
@@ -56,31 +55,6 @@ fn read_file() {
             Err(e) => panic!("Failed to read from file: {}", e),
         }
     }
-}
-
-#[allow(dead_code)]
-fn read_row_group<R: Read>(reader: &mut std::io::BufReader<R>) -> Vec<LineItem> {
-    let item_count = read_u16(reader);
-    let mut lineitems = Vec::new();
-    let linestatus : Vec<String> = StringColumnReader::new(reader).collect();
-    let returnflag : Vec<String> = StringColumnReader::new(reader).collect();
-    let quantity = read_f64_column(reader, item_count);
-    let discount = read_f64_column(reader, item_count);
-    let tax = read_f64_column(reader, item_count);
-    let extendedprice = read_f64_column(reader, item_count);
-
-    for i in 0..item_count {
-        lineitems.push(LineItem {
-            l_linestatus: linestatus[i as usize].clone(),
-            l_returnflag: returnflag[i as usize].clone(),
-            l_quantity: quantity[i as usize],
-            l_extendedprice: extendedprice[i as usize],
-            l_discount: discount[i as usize],
-            l_tax: tax[i as usize],
-        });
-    }
-
-    lineitems
 }
 
 fn query_1() {
@@ -206,8 +180,6 @@ fn main() {
     println!("Hello, world!2");
     let cli = Cli::parse();
 
-    // You can check for the existence of subcommands, and if found use their
-    // matches just as you would the top level cmd
     match &cli.command {
         Some(Commands::WriteLineItems {}) => {
             save_data();
@@ -220,7 +192,6 @@ fn main() {
             save_data_parquet_with_dictionary();
         }
         Some(Commands::RunQuery1Column {}) => {
-            //query_1_column();
             query_1_column();
         }
         Some(Commands::RunQuery1Parquet) => {
@@ -246,7 +217,7 @@ fn main() {
 }
 
 fn query_1_column() {
-    let state = query_1_column("lineitems_column.bin");
+    let state = abdb::query_1_column("lineitems_column.bin");
     print_state_column(state);
 }
 
